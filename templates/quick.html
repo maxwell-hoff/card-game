@@ -25,6 +25,15 @@
       {% set row_res = layout.row_reserves %}
       {% set col_res = layout.col_reserves %}
       {% set opp = layout.opponent_row_index %}
+      
+      <!-- Column reserves (Top) shown at top with tooltip -->
+      <div class="row">
+        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+        {% for c in range(5) %}
+          <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
+        {% endfor %}
+      </div>
 
       <!-- Column reserves (Bottom) shown at top with tooltip -->
       <div class="row">
@@ -37,22 +46,13 @@
 
       {% for r in range(rows|length) %}
         <div class="row">
-          <div class="cell reserve" title="Row reserve top">{{ row_res[r][0] }}</div>
           <div class="cell reserve" title="Row reserve bottom">{{ row_res[r][1] }}</div>
+          <div class="cell reserve" title="Row reserve top">{{ row_res[r][0] }}</div>
           {% for c in range(5) %}
             <div class="cell {% if r==opp %}opponent{% endif %}">{{ rows[r][c] }}</div>
           {% endfor %}
         </div>
       {% endfor %}
-
-      <!-- Column reserves (Top) shown at bottom with tooltip -->
-      <div class="row">
-        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
-        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
-        {% for c in range(5) %}
-          <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
-        {% endfor %}
-      </div>
     </div>
 
     <form method="post" action="/report">
