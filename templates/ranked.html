@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Ranked (WIP)</h2>
+  <p>{{ note }}</p>
+  <ul>
+    {% for p in puzzles %}
+      <li>Puzzle {{ p.id }}</li>
+    {% else %}
+      <li>No ranked set selected yet.</li>
+    {% endfor %}
+  </ul>
+{% endblock %}

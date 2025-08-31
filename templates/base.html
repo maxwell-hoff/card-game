@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Card Game Assistant</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+      header { background: #222; color: #fff; padding: 10px 16px; }
+      nav a { color: #fff; margin-right: 12px; text-decoration: none; }
+      .container { padding: 16px; }
+      .grid { display: inline-block; margin: 10px 0; }
+      .row { display: flex; margin: 2px 0; }
+      .cell { border: 1px solid #ccc; padding: 8px 10px; width: 48px; text-align: center; }
+      .reserve { background: #f6f6f6; }
+      .opponent { background: #ffe8e8; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="/quick">Quick Play</a>
+        <a href="/ranked">Ranked</a>
+        <a href="/stats">Stats</a>
+      </nav>
+    </header>
+    <div class="container">
+      {% block content %}{% endblock %}
+    </div>
+  </body>
+</html>

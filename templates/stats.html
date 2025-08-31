@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Stats</h2>
+  <p>{{ elo }}</p>
+  <table border="1" cellpadding="6" cellspacing="0">
+    <tr>
+      <th>ID</th>
+      <th>Date</th>
+      <th>Solved</th>
+      <th>Seconds</th>
+      <th>Players</th>
+      <th>Level</th>
+      <th>Expected Turns</th>
+    </tr>
+    {% for r in results %}
+      <tr>
+        <td>{{ r[0] }}</td>
+        <td>{{ r[1] }}</td>
+        <td>{{ 'Yes' if r[2] else 'No' }}</td>
+        <td>{{ r[3] if r[3] is not none else '-' }}</td>
+        <td>{{ r[4] }}</td>
+        <td>{{ r[5] }}</td>
+        <td>{{ r[6] }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+{% endblock %}

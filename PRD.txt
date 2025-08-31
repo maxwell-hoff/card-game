@@ -1,0 +1,71 @@
+Product: Cooperative Card Game Assistant
+Owner: You
+Status: Draft v1
+
+1. Purpose
+- Provide solvable, in-person card puzzles using a standard 52-card deck.
+- Enable quick play and a future ranked progression mode.
+- Track player results and surface simple stats, with placeholder ELO.
+
+2. Users and Use Cases
+- Solo or small groups (1–5 players) seeking cooperative, logic-based gameplay.
+- Quick play: draw a random puzzle; report solved or gave up.
+- Ranked (WIP): curated progression of puzzles whose outcomes affect rating.
+
+3. Core Game Rules (Physical Setup)
+- Grid: 5 columns by N rows where N = players + 1 (opponent row).
+- Each row has two row-reserve cards to the left (top, bottom).
+- Each column has two column-reserve cards at the top (top, bottom).
+- Legal actions:
+  a) Swap two cards in a player row; mirror swap at same indices in opponent row.
+  b) Row shift right with row-reserve interaction.
+  c) Row shift left with row-reserve interaction.
+  d) Column shift down with column-reserve interaction.
+  e) Column shift up with column-reserve interaction.
+- Win conditions:
+  1) A row of five all same suit (can be opponent row).
+  2) One column strictly ascending or descending by rank (Ace high).
+  3) Highest card in opponent row is lower than all cards in other rows.
+
+4. Puzzle Generation (Backend)
+- Build solved layouts from random cards meeting constraints:
+  - Opponent row = 5 lowest cards in the draw.
+  - Reject deck if 5th highest rank equals 6th highest.
+  - Identify a five-card same-suit row (opponent or another suit from remaining cards).
+  - Choose a random row for the suit row.
+  - Construct an ascending column sequence based on opponent row highest and chosen suit row.
+  - Place remaining grid/reserve cards randomly to complete the solved layout.
+- Produce start layouts by scrambling via random legal actions; store the inverse sequence as the solution path.
+- Difficulty = number of scramble steps (1..25).
+- Targets: for players 1..5, generate 100 puzzles per level per players (default, configurable).
+
+5. Data Model (SQLite)
+- puzzles: id, players, level, num_actions, opponent_row_index, suite_row_index, column_index, start_layout_json, solved_layout_json, actions_json, created_at.
+- game_results: id, puzzle_id, solved, seconds, created_at.
+
+6. Application Flows
+- Generator CLI: creates/initializes DB; generates puzzles per parameters.
+- Web app:
+  - Quick Play: displays one random puzzle, expected turns, and solve% (if available). Buttons to report solved/give up.
+  - Ranked: WIP note and placeholder query hook for future ranked selection.
+  - Stats: recent results table and placeholder ELO readout.
+
+7. Non-Goals (v1)
+- Full-featured ranking algorithm.
+- Complex UI/UX; minimal HTML only.
+- Multiplayer network play.
+
+8. Technical Constraints
+- Python 3.10+, Flask for server, SQLite for storage.
+- Avoid complex external packages; standard library preferred.
+- Keep logic in Python; minimal JS.
+
+9. Metrics
+- Puzzle solve rate per puzzle.
+- Personal solve rate over time.
+- Average expected turns vs. user outcomes (future).
+
+10. Risks and Open Questions
+- Generator feasibility/performance for full 12,500 target set.
+- Validity coverage of solved-state construction and legality of scramble steps.
+- Balance of difficulty using steps-only heuristic.
