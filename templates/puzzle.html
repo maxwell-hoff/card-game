@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Puzzle Detail</h2>
+  {% if not puzzle %}
+    <p>Not found.</p>
+  {% else %}
+    <p><strong>ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }} | <strong>Turns:</strong> {{ puzzle.num_actions }}</p>
+
+    <h3>Start Layout</h3>
+    {% set layout = start_layout %}
+    <div class="grid">
+      {% set rows = layout.rows %}
+      {% set row_res = layout.row_reserves %}
+      {% set col_res = layout.col_reserves %}
+      {% set opp = layout.opponent_row_index %}
+      <div class="row">
+        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+        {% for c in range(5) %}
+          <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
+        {% endfor %}
+      </div>
+      <div class="row">
+        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+        {% for c in range(5) %}
+          <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
+        {% endfor %}
+      </div>
+      {% for r in range(rows|length) %}
+        <div class="row">
+          <div class="cell reserve" title="Row reserve bottom">{{ row_res[r][1] }}</div>
+          <div class="cell reserve" title="Row reserve top">{{ row_res[r][0] }}</div>
+          {% for c in range(5) %}
+            <div class="cell {% if r==opp %}opponent{% endif %}">{{ rows[r][c] }}</div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+
+    <h3>Solved Layout</h3>
+    {% set layout = solved_layout %}
+    <div class="grid">
+      {% set rows = layout.rows %}
+      {% set row_res = layout.row_reserves %}
+      {% set col_res = layout.col_reserves %}
+      {% set opp = layout.opponent_row_index %}
+      <div class="row">
+        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+        {% for c in range(5) %}
+          <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
+        {% endfor %}
+      </div>
+      <div class="row">
+        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+        {% for c in range(5) %}
+          <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
+        {% endfor %}
+      </div>
+      {% for r in range(rows|length) %}
+        <div class="row">
+          <div class="cell reserve" title="Row reserve bottom">{{ row_res[r][1] }}</div>
+          <div class="cell reserve" title="Row reserve top">{{ row_res[r][0] }}</div>
+          {% for c in range(5) %}
+            <div class="cell {% if r==opp %}opponent{% endif %}">{{ rows[r][c] }}</div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+
+    <h3>Solution Steps</h3>
+    <ol>
+      {% for step in actions %}
+        <li><code>{{ step.type }}</code> {{ step.params }}</li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+{% endblock %}

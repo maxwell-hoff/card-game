@@ -6,7 +6,7 @@ from typing import Optional
 
 from flask import Flask, render_template, request, redirect, url_for
 
-from app.db import get_conn, get_random_puzzle, add_game_result, get_puzzle_stats, get_random_puzzle_for_filters
+from app.db import get_conn, get_random_puzzle, add_game_result, get_puzzle_stats, get_random_puzzle_for_filters, get_puzzle_by_id
 
 
 def create_app(db_path: str) -> Flask:
@@ -49,6 +49,16 @@ def create_app(db_path: str) -> Flask:
             players_filter=players_filter,
             turns_filter=turns_filter,
         )
+
+    @app.route("/puzzle/<int:puzzle_id>")
+    def puzzle_detail(puzzle_id: int):
+        sp = get_puzzle_by_id(conn, puzzle_id)
+        if not sp:
+            return render_template("puzzle.html", puzzle=None)
+        start_layout = json.loads(sp.start_layout_json)
+        solved_layout = json.loads(sp.solved_layout_json)
+        actions = json.loads(sp.actions_json)
+        return render_template("puzzle.html", puzzle=sp, start_layout=start_layout, solved_layout=solved_layout, actions=actions)
 
     @app.route("/report", methods=["POST"])
     def report():

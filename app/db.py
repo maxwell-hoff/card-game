@@ -151,6 +151,18 @@ def get_random_puzzle_for_filters(conn: sqlite3.Connection, players: Optional[in
     return StoredPuzzle(*row)
 
 
+def get_puzzle_by_id(conn: sqlite3.Connection, puzzle_id: int) -> Optional[StoredPuzzle]:
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, players, level, num_actions, opponent_row_index, suite_row_index, column_index, start_layout_json, solved_layout_json, actions_json FROM puzzles WHERE id=?",
+        (puzzle_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return StoredPuzzle(*row)
+
+
 def add_game_result(conn: sqlite3.Connection, puzzle_id: int, solved: bool, seconds: Optional[int]) -> None:
     cur = conn.cursor()
     cur.execute(
