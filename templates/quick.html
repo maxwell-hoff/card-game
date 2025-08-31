@@ -26,6 +26,15 @@
       {% set col_res = layout.col_reserves %}
       {% set opp = layout.opponent_row_index %}
       
+      <!-- Column reserves (Bottom) shown at top with tooltip -->
+      <div class="row">
+        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+        {% for c in range(5) %}
+          <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
+        {% endfor %}
+      </div>
+      
       <!-- Column reserves (Top) shown at top with tooltip -->
       <div class="row">
         <div class="cell reserve" title="Column reserve top">&nbsp;</div>
@@ -35,14 +44,6 @@
         {% endfor %}
       </div>
 
-      <!-- Column reserves (Bottom) shown at top with tooltip -->
-      <div class="row">
-        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
-        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
-        {% for c in range(5) %}
-          <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
-        {% endfor %}
-      </div>
 
       {% for r in range(rows|length) %}
         <div class="row">
