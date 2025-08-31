@@ -26,29 +26,31 @@
       {% set col_res = layout.col_reserves %}
       {% set opp = layout.opponent_row_index %}
 
+      <!-- Column reserves (Bottom) shown at top with tooltip -->
       <div class="row">
-        <div class="cell reserve">&nbsp;</div>
-        <div class="cell reserve">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
         {% for c in range(5) %}
-          <div class="cell reserve">{{ col_res[c][0] }}</div>
+          <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
         {% endfor %}
       </div>
 
       {% for r in range(rows|length) %}
         <div class="row">
-          <div class="cell reserve">{{ row_res[r][0] }}</div>
-          <div class="cell reserve">{{ row_res[r][1] }}</div>
+          <div class="cell reserve" title="Row reserve top">{{ row_res[r][0] }}</div>
+          <div class="cell reserve" title="Row reserve bottom">{{ row_res[r][1] }}</div>
           {% for c in range(5) %}
             <div class="cell {% if r==opp %}opponent{% endif %}">{{ rows[r][c] }}</div>
           {% endfor %}
         </div>
       {% endfor %}
 
+      <!-- Column reserves (Top) shown at bottom with tooltip -->
       <div class="row">
-        <div class="cell reserve">&nbsp;</div>
-        <div class="cell reserve">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
         {% for c in range(5) %}
-          <div class="cell reserve">{{ col_res[c][1] }}</div>
+          <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
         {% endfor %}
       </div>
     </div>
@@ -61,7 +63,6 @@
       <button type="submit" name="solved" value="0">Give up</button>
     </form>
     <p>
-      {% set sep = '?' %}
       {% if players_filter or turns_filter %}
         {% set params = [] %}
         {% if players_filter %}{% set _ = params.append('players=' ~ players_filter) %}{% endif %}
