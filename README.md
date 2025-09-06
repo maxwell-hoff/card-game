@@ -70,6 +70,35 @@ python serve.py --db-path puzzles.sqlite --port 8002 --debug
 
 Open `http://127.0.0.1:8002` in your browser.
 
+### Configuration
+
+The server reads configuration from environment variables or an optional `config.json` (not committed). Env vars take precedence.
+
+Supported keys:
+
+- `FLASK_SECRET_KEY`
+- `FIREBASE_SERVICE_ACCOUNT_JSON`
+- `FIREBASE_WEB_API_KEY`
+- `FIREBASE_AUTH_DOMAIN`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_APP_ID`
+
+Example `config.json`:
+
+```json
+{
+  "FLASK_SECRET_KEY": "replace-me",
+  "FIREBASE_SERVICE_ACCOUNT_JSON": "/absolute/path/to/service-account.json",
+  "FIREBASE_WEB_API_KEY": "xxxx",
+  "FIREBASE_AUTH_DOMAIN": "your-project.firebaseapp.com",
+  "FIREBASE_PROJECT_ID": "your-project",
+  "FIREBASE_APP_ID": "1:1234567890:web:abcdef"
+}
+```
+
+Generate a secret key using: <python3 -c 'import secrets; print(secrets.token_hex(32))'>
+You can also point to a different file via `APP_CONFIG_JSON=/path/to/config.json`.
+
 ## Ranked Mode & ELO
 
 - Ranked mode is a WIP with placeholder code to select puzzles once enough data exists.

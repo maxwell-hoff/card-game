@@ -22,10 +22,128 @@
         <a href="/quick">Quick Play</a>
         <a href="/ranked">Ranked</a>
         <a href="/stats">Stats</a>
+        <span style="float:right">
+          <span id="user-display" style="margin-right:8px;">{% if session_user %}Signed in as {{ session_user.display_name }}{% else %}Not signed in{% endif %}</span>
+          {% if not session_user %}
+          <button id="google-login-btn" style="padding:4px 8px;">Sign in with Google</button>
+          {% else %}
+          <button id="logout-btn" style="padding:4px 8px;">Sign out</button>
+          {% endif %}
+        </span>
       </nav>
     </header>
     <div class="container">
       {% block content %}{% endblock %}
     </div>
+    <script>
+      window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson }};
+    </script>
+    <script type="module">
+      const cfg = window.__FIREBASE_CONFIG__ || {};
+      const authDebug = (new URLSearchParams(window.location.search)).get('debugAuth') === '1' || localStorage.getItem('authDebug') === '1';
+      const dlog = (...args) => { if (authDebug) console.log('[AUTH]', ...args); };
+      // Surface unexpected errors in console when debugging is enabled
+      if (authDebug) {
+        window.addEventListener('error', (ev) => {
+          console.error('[AUTH] window.onerror', ev?.message || ev);
+        });
+        window.addEventListener('unhandledrejection', (ev) => {
+          console.error('[AUTH] unhandledrejection', ev?.reason || ev);
+        });
+      }
+
+      dlog('Location', { origin: location.origin, href: location.href });
+      dlog('Navigator', { userAgent: navigator.userAgent, cookieEnabled: navigator.cookieEnabled });
+      dlog('Firebase config', { hasApiKey: !!cfg.apiKey, authDomain: cfg.authDomain, projectId: cfg.projectId, appId: cfg.appId });
+
+      if (!cfg.apiKey || !cfg.projectId || !cfg.authDomain) {
+        dlog('Missing required Firebase config fields. Auth will not initialize.');
+      }
+
+      if (cfg.apiKey && cfg.projectId) {
+        import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js').then(({ initializeApp }) => {
+          dlog('Firebase app module loaded');
+          import('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js').then(({ getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }) => {
+            dlog('Firebase auth module loaded');
+            const app = initializeApp(cfg);
+            dlog('Firebase app initialized');
+            const auth = getAuth(app);
+            const provider = new GoogleAuthProvider();
+            provider.setCustomParameters({ prompt: 'select_account' });
+            dlog('Auth provider configured');
+            onAuthStateChanged(auth, (user) => {
+              dlog('onAuthStateChanged', !!user, user ? { uid: user.uid, displayName: user.displayName, email: user.email } : null);
+            });
+
+            const loginBtn = document.getElementById('google-login-btn');
+            const logoutBtn = document.getElementById('logout-btn');
+            if (loginBtn) {
+              loginBtn.addEventListener('click', async () => {
+                dlog('Login button clicked, launching popup...');
+                try {
+                  const res = await signInWithPopup(auth, provider);
+                  dlog('Popup success', { uid: res?.user?.uid, displayName: res?.user?.displayName });
+                  const idToken = await res.user.getIdToken();
+                  const tokenPreview = idToken ? idToken.slice(0, 12) + '...' : null;
+                  // Decode token payload for exp debugging only
+                  let tokenMeta = null;
+                  try {
+                    const payload = JSON.parse(atob(idToken.split('.')[1]));
+                    tokenMeta = { exp: payload.exp, now: Math.floor(Date.now()/1000), expiresInSec: payload.exp - Math.floor(Date.now()/1000) };
+                  } catch (_) {}
+                  dlog('Got ID token', { preview: tokenPreview, meta: tokenMeta });
+                  const displayName = res.user.displayName || 'Player';
+                  const r = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_token: idToken, display_name: displayName })
+                  });
+                  dlog('POST /api/login response status', r.status);
+                  const j = await r.json().catch(() => null);
+                  dlog('POST /api/login response body', j);
+                  if (j && j.ok) {
+                    location.reload();
+                  } else {
+                    alert('Login failed');
+                  }
+                } catch (e) {
+                  const code = e?.code; // e.g., auth/popup-closed-by-user
+                  const message = e?.message || String(e);
+                  const details = e?.customData || null;
+                  console.error('[AUTH] signInWithPopup error', { code, message, details });
+                  if (code === 'auth/popup-blocked') {
+                    alert('Popup was blocked by the browser. Please allow popups for this site.');
+                  } else if (code === 'auth/popup-closed-by-user') {
+                    alert('Popup closed before completing sign-in.');
+                  } else if (code === 'auth/unauthorized-domain') {
+                    alert('This origin is not authorized in Firebase Auth. In Firebase Console → Authentication → Settings → Authorized domains, add 127.0.0.1 and localhost.');
+                  } else {
+                    alert('Login popup failed');
+                  }
+                }
+              });
+            }
+            if (logoutBtn) {
+              logoutBtn.addEventListener('click', async () => {
+                dlog('Logout button clicked');
+                try {
+                  await signOut(auth);
+                  dlog('Firebase signOut completed');
+                } catch (e) {
+                  console.warn('[AUTH] signOut error', e);
+                }
+                const r = await fetch('/api/logout', { method: 'POST' });
+                dlog('POST /api/logout status', r.status);
+                location.reload();
+              });
+            }
+          }).catch((err) => {
+            console.error('[AUTH] Failed to load firebase-auth.js', err);
+          });
+        }).catch((err) => {
+          console.error('[AUTH] Failed to load firebase-app.js', err);
+        });
+      }
+    </script>
   </body>
 </html>
