@@ -12,14 +12,17 @@
     </select>
     <label for="turns">Turns:</label>
     <input id="turns" name="turns" type="number" min="1" value="{{ turns_filter if turns_filter is not none else '' }}" placeholder="Random" />
+    <input type="hidden" name="go" value="1" />
     <button type="submit">Go</button>
   </form>
 
-  {% if not puzzle %}
+  {% if not requested %}
+    <p>Choose filters and hit Go to get a puzzle.</p>
+  {% elif not puzzle %}
     <p>No puzzles found. Generate them first.</p>
   {% else %}
     <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
-    <p><strong>Expected turns to solve:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
+    <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
     <div class="grid">
       {% set rows = layout.rows %}
       {% set row_res = layout.row_reserves %}
@@ -60,18 +63,10 @@
       <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
       {% if players_filter %}<input type="hidden" name="players_filter" value="{{ players_filter }}" />{% endif %}
       {% if turns_filter %}<input type="hidden" name="turns_filter" value="{{ turns_filter }}" />{% endif %}
-      <button type="submit" name="solved" value="1">Solved</button>
-      <button type="submit" name="solved" value="0">Give up</button>
+      <label>
+        <input type="checkbox" name="solved" value="1" /> Solved
+      </label>
+      <button type="submit">Submit</button>
     </form>
-    <p>
-      {% if players_filter or turns_filter %}
-        {% set params = [] %}
-        {% if players_filter %}{% set _ = params.append('players=' ~ players_filter) %}{% endif %}
-        {% if turns_filter %}{% set _ = params.append('turns=' ~ turns_filter) %}{% endif %}
-        <a href="/quick?{{ params|join('&') }}">Next puzzle</a>
-      {% else %}
-        <a href="/quick">Next puzzle</a>
-      {% endif %}
-    </p>
   {% endif %}
 {% endblock %}

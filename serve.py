@@ -21,6 +21,7 @@ def create_app(db_path: str) -> Flask:
     def quick():
         players_q = request.args.get("players")
         turns_q = request.args.get("turns")
+        requested = request.args.get("go") == "1"
         try:
             players_filter = int(players_q) if players_q else None
         except ValueError:
@@ -34,9 +35,25 @@ def create_app(db_path: str) -> Flask:
         if turns_filter is not None and turns_filter < 1:
             turns_filter = None
 
+        # If user hasn't clicked Go yet, do not fetch or render a puzzle
+        if not requested:
+            return render_template(
+                "quick.html",
+                puzzle=None,
+                players_filter=players_filter,
+                turns_filter=turns_filter,
+                requested=False,
+            )
+
         puzzle = get_random_puzzle_for_filters(conn, players_filter, turns_filter)
         if not puzzle:
-            return render_template("quick.html", puzzle=None, players_filter=players_filter, turns_filter=turns_filter)
+            return render_template(
+                "quick.html",
+                puzzle=None,
+                players_filter=players_filter,
+                turns_filter=turns_filter,
+                requested=True,
+            )
         layout = json.loads(puzzle.start_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
         solve_pct = (solved / count * 100.0) if count else None
@@ -48,6 +65,7 @@ def create_app(db_path: str) -> Flask:
             solve_pct=solve_pct,
             players_filter=players_filter,
             turns_filter=turns_filter,
+            requested=True,
         )
 
     @app.route("/puzzle/<int:puzzle_id>")
@@ -95,9 +113,25 @@ def create_app(db_path: str) -> Flask:
             """
         )
         rows = cur.fetchall()
+        # Compute win percentage: a puzzle counts as started if it has any result row,
+        # and as won if it has any solved=1 row. Once solved, it remains a win.
+        cur.execute("SELECT COUNT(DISTINCT puzzle_id) FROM game_results")
+        started_count_row = cur.fetchone()
+        started_count = started_count_row[0] if started_count_row and started_count_row[0] else 0
+        cur.execute("SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE solved=1")
+        solved_count_row = cur.fetchone()
+        solved_count = solved_count_row[0] if solved_count_row and solved_count_row[0] else 0
+        win_pct = (solved_count / started_count * 100.0) if started_count else None
         # Placeholder ELO computation entry point
         elo_placeholder = "ELO: WIP"
-        return render_template("stats.html", results=rows, elo=elo_placeholder)
+        return render_template(
+            "stats.html",
+            results=rows,
+            elo=elo_placeholder,
+            win_pct=win_pct,
+            started_count=started_count,
+            solved_count=solved_count,
+        )
 
     return app
 
