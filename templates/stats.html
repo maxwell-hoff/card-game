@@ -1,6 +1,11 @@
 {% extends 'base.html' %}
 {% block content %}
   <h2>Stats</h2>
+  {% if win_pct is not none %}
+    <p><strong>Win %:</strong> {{ '%.1f'|format(win_pct) }}% ({{ solved_count }}/{{ started_count }})</p>
+  {% else %}
+    <p><strong>Win %:</strong> - (no puzzles started)</p>
+  {% endif %}
   <p>{{ elo }}</p>
   <table border="1" cellpadding="6" cellspacing="0">
     <tr>

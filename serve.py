@@ -113,9 +113,25 @@ def create_app(db_path: str) -> Flask:
             """
         )
         rows = cur.fetchall()
+        # Compute win percentage: a puzzle counts as started if it has any result row,
+        # and as won if it has any solved=1 row. Once solved, it remains a win.
+        cur.execute("SELECT COUNT(DISTINCT puzzle_id) FROM game_results")
+        started_count_row = cur.fetchone()
+        started_count = started_count_row[0] if started_count_row and started_count_row[0] else 0
+        cur.execute("SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE solved=1")
+        solved_count_row = cur.fetchone()
+        solved_count = solved_count_row[0] if solved_count_row and solved_count_row[0] else 0
+        win_pct = (solved_count / started_count * 100.0) if started_count else None
         # Placeholder ELO computation entry point
         elo_placeholder = "ELO: WIP"
-        return render_template("stats.html", results=rows, elo=elo_placeholder)
+        return render_template(
+            "stats.html",
+            results=rows,
+            elo=elo_placeholder,
+            win_pct=win_pct,
+            started_count=started_count,
+            solved_count=solved_count,
+        )
 
     return app
 
