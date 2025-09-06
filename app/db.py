@@ -28,13 +28,14 @@ CREATE INDEX IF NOT EXISTS idx_puzzles_level_players ON puzzles(level, players);
 CREATE TABLE IF NOT EXISTS game_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     puzzle_id INTEGER NOT NULL,
+    user_id INTEGER,
     solved INTEGER NOT NULL,
     seconds INTEGER,
     created_at TEXT NOT NULL,
-    FOREIGN KEY(puzzle_id) REFERENCES puzzles(id)
+    FOREIGN KEY(puzzle_id) REFERENCES puzzles(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
 );
 
--- Users table for authentication (no emails/passwords stored)
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_key TEXT NOT NULL UNIQUE,
@@ -42,6 +43,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_game_results_user_id ON game_results(user_id);
+CREATE INDEX IF NOT EXISTS idx_game_results_created_at ON game_results(created_at);
 """
 
 
@@ -57,6 +60,24 @@ def init_db(db_path: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def ensure_migrations(conn: sqlite3.Connection) -> None:
+    """Apply lightweight migrations for existing databases.
+
+    - Add user_id column to game_results if missing
+    - Add helpful indexes
+    """
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(game_results)")
+    cols = [r[1] for r in cur.fetchall()]
+    if "user_id" not in cols:
+        cur.execute("ALTER TABLE game_results ADD COLUMN user_id INTEGER")
+        conn.commit()
+    # Create indexes (IF NOT EXISTS is safe even if they already exist)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_game_results_user_id ON game_results(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_game_results_created_at ON game_results(created_at)")
+    conn.commit()
 
 
 @dataclass
@@ -172,11 +193,17 @@ def get_puzzle_by_id(conn: sqlite3.Connection, puzzle_id: int) -> Optional[Store
     return StoredPuzzle(*row)
 
 
-def add_game_result(conn: sqlite3.Connection, puzzle_id: int, solved: bool, seconds: Optional[int]) -> None:
+def add_game_result(
+    conn: sqlite3.Connection,
+    puzzle_id: int,
+    solved: bool,
+    seconds: Optional[int],
+    user_id: Optional[int] = None,
+) -> None:
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO game_results (puzzle_id, solved, seconds, created_at) VALUES (?, ?, ?, ?)",
-        (puzzle_id, 1 if solved else 0, seconds, datetime.utcnow().isoformat()),
+        "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, created_at) VALUES (?, ?, ?, ?, ?)",
+        (puzzle_id, user_id, 1 if solved else 0, seconds, datetime.utcnow().isoformat()),
     )
     conn.commit()
 
@@ -215,3 +242,72 @@ def ensure_user(conn: sqlite3.Connection, user_key: str, display_name: str) -> i
     )
     conn.commit()
     return cur.lastrowid
+
+
+def get_all_users(conn: sqlite3.Connection) -> List[Tuple[int, str]]:
+    cur = conn.cursor()
+    cur.execute("SELECT id, display_name FROM users ORDER BY id ASC")
+    rows = cur.fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
+def get_user_results_with_puzzle_meta(
+    conn: sqlite3.Connection, user_id: int
+) -> List[Tuple[str, int, int, Optional[int]]]:
+    """Return list of (created_at_iso, solved_int, level, seconds) for a user, ordered by time asc."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT gr.created_at, gr.solved, p.level, gr.seconds
+        FROM game_results gr
+        JOIN puzzles p ON p.id = gr.puzzle_id
+        WHERE gr.user_id = ?
+        ORDER BY gr.created_at ASC, gr.id ASC
+        """,
+        (user_id,),
+    )
+    return cur.fetchall()
+
+
+def get_user_basic_stats(
+    conn: sqlite3.Connection,
+    user_id: int,
+    recent_days: int,
+) -> Tuple[int, int, Optional[float], Optional[float], Optional[float]]:
+    """Return (attempts, wins, win_rate_pct, avg_level_all, avg_level_recent)."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT COUNT(*), SUM(solved)
+        FROM game_results
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    row = cur.fetchone()
+    attempts = int(row[0] or 0)
+    wins = int(row[1] or 0)
+    win_rate = (wins / attempts * 100.0) if attempts else None
+    cur.execute(
+        """
+        SELECT AVG(p.level)
+        FROM game_results gr
+        JOIN puzzles p ON p.id = gr.puzzle_id
+        WHERE gr.user_id = ?
+        """,
+        (user_id,),
+    )
+    row2 = cur.fetchone()
+    avg_level_all = float(row2[0]) if row2 and row2[0] is not None else None
+    cur.execute(
+        """
+        SELECT AVG(p.level)
+        FROM game_results gr
+        JOIN puzzles p ON p.id = gr.puzzle_id
+        WHERE gr.user_id = ? AND gr.created_at >= datetime('now', ?)
+        """,
+        (user_id, f'-{int(recent_days)} days'),
+    )
+    row3 = cur.fetchone()
+    avg_level_recent = float(row3[0]) if row3 and row3[0] is not None else None
+    return attempts, wins, win_rate, avg_level_all, avg_level_recent
