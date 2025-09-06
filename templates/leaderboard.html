@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Leaderboard</h2>
+
+  {% if user_summary %}
+    <div style="padding:10px; background:#f3f7ff; border:1px solid #cfe0ff; margin-bottom:12px;">
+      <strong>Your Summary:</strong>
+      <div>
+        <span><strong>Rank:</strong> {{ user_summary.rank }}</span>
+        &nbsp;|&nbsp;
+        <span><strong>ELO:</strong> {{ '%.0f'|format(user_summary.elo) }}</span>
+        &nbsp;|&nbsp;
+        <span><strong>Win rate:</strong> {% if user_summary.win_rate is not none %}{{ '%.1f'|format(user_summary.win_rate) }}%{% else %}-{% endif %}</span>
+        &nbsp;|&nbsp;
+        <span><strong>Avg difficulty:</strong> {% if user_summary.avg_level_all is not none %}{{ '%.2f'|format(user_summary.avg_level_all) }}{% else %}-{% endif %}</span>
+        &nbsp;|&nbsp;
+        <span><strong>Avg difficulty (recent window):</strong> {% if user_summary.avg_level_recent is not none %}{{ '%.2f'|format(user_summary.avg_level_recent) }}{% else %}-{% endif %}</span>
+      </div>
+    </div>
+  {% endif %}
+
+  <table border="1" cellpadding="6" cellspacing="0">
+    <tr>
+      <th>Rank</th>
+      <th>Player</th>
+      <th>ELO</th>
+      <th>Win %</th>
+      <th>Attempts</th>
+      <th>Avg Difficulty</th>
+      <th>Avg Difficulty (recent)</th>
+    </tr>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.rank }}</td>
+        <td>{{ r.display_name }}</td>
+        <td>{{ '%.0f'|format(r.elo) }}</td>
+        <td>{% if r.win_rate is not none %}{{ '%.1f'|format(r.win_rate) }}%{% else %}-{% endif %}</td>
+        <td>{{ r.attempts }}</td>
+        <td>{% if r.avg_level_all is not none %}{{ '%.2f'|format(r.avg_level_all) }}{% else %}-{% endif %}</td>
+        <td>{% if r.avg_level_recent is not none %}{{ '%.2f'|format(r.avg_level_recent) }}{% else %}-{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7">No players yet.</td></tr>
+    {% endfor %}
+  </table>
+
+  <div style="margin-top:12px;">
+    {% if page > 1 %}
+      <a href="/leaderboard?page={{ page - 1 }}">Prev</a>
+    {% endif %}
+    <span style="margin:0 8px;">Page {{ page }} / {{ num_pages }}</span>
+    {% if page < num_pages %}
+      <a href="/leaderboard?page={{ page + 1 }}">Next</a>
+    {% endif %}
+  </div>
+{% endblock %}
+
+

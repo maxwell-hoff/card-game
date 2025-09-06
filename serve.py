@@ -7,7 +7,21 @@ import os
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 
-from app.db import get_conn, get_random_puzzle, add_game_result, get_puzzle_stats, get_random_puzzle_for_filters, get_puzzle_by_id, ensure_user, SCHEMA
+from app.db import (
+    get_conn,
+    get_random_puzzle,
+    add_game_result,
+    get_puzzle_stats,
+    get_random_puzzle_for_filters,
+    get_puzzle_by_id,
+    ensure_user,
+    SCHEMA,
+    ensure_migrations,
+    get_all_users,
+    get_user_results_with_puzzle_meta,
+    get_user_basic_stats,
+)
+from app.elo import EloConfig, compute_user_elo
 
 import firebase_admin
 from firebase_admin import auth as fb_auth, credentials
@@ -38,12 +52,16 @@ def create_app(db_path: str) -> Flask:
     )
 
     conn = get_conn(db_path)
-    # Ensure schema exists (including users)
+    # Ensure schema exists and run light migrations (including users)
     try:
         conn.executescript(SCHEMA)
         conn.commit()
     except Exception:
         pass
+    try:
+        ensure_migrations(conn)
+    except Exception as e:
+        print("[DB] Migrations failed:", e)
 
     # Initialize Firebase Admin if credentials are present or ADC is configured.
     # If neither is available, we will fallback to verifying ID tokens with google-oauth public certs.
@@ -161,7 +179,8 @@ def create_app(db_path: str) -> Flask:
         players_filter = request.form.get("players_filter")
         turns_filter = request.form.get("turns_filter")
         seconds_val: Optional[int] = int(seconds) if seconds else None
-        add_game_result(conn, puzzle_id, solved_flag, seconds_val)
+        user_id = (session.get("user") or {}).get("id")
+        add_game_result(conn, puzzle_id, solved_flag, seconds_val, user_id=user_id)
         kwargs = {}
         if players_filter:
             kwargs["players"] = players_filter
@@ -240,7 +259,7 @@ def create_app(db_path: str) -> Flask:
         solved_count_row = cur.fetchone()
         solved_count = solved_count_row[0] if solved_count_row and solved_count_row[0] else 0
         win_pct = (solved_count / started_count * 100.0) if started_count else None
-        # Placeholder ELO computation entry point
+        # Placeholder could compute current user's ELO if logged in
         elo_placeholder = "ELO: WIP"
         return render_template(
             "stats.html",
@@ -249,6 +268,122 @@ def create_app(db_path: str) -> Flask:
             win_pct=win_pct,
             started_count=started_count,
             solved_count=solved_count,
+        )
+
+    @app.route("/leaderboard")
+    def leaderboard():
+        # Pagination
+        try:
+            page = int(request.args.get("page", "1"))
+        except ValueError:
+            page = 1
+        page = max(1, page)
+        page_size = 20
+
+        # Configurable ELO parameters (could be surfaced via query params later)
+        cfg = EloConfig()
+        # Gather per-user results
+        users = get_all_users(conn)
+        per_user = []
+        for uid, display_name in users:
+            rows = get_user_results_with_puzzle_meta(conn, uid)
+            elo_value = compute_user_elo(rows, cfg)
+            attempts, wins, win_rate, avg_level_all, avg_level_recent = get_user_basic_stats(conn, uid, recent_days=int(cfg.recency_halflife_days))
+            per_user.append({
+                "user_id": uid,
+                "display_name": display_name,
+                "elo": elo_value,
+                "attempts": attempts,
+                "wins": wins,
+                "win_rate": win_rate,
+                "avg_level_all": avg_level_all,
+                "avg_level_recent": avg_level_recent,
+            })
+        # Include anonymous/legacy results without user_id as a single synthetic user
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT gr.created_at, gr.solved, p.level, gr.seconds
+            FROM game_results gr
+            JOIN puzzles p ON p.id = gr.puzzle_id
+            WHERE gr.user_id IS NULL
+            ORDER BY gr.created_at ASC, gr.id ASC
+            """
+        )
+        anon_rows = cur.fetchall()
+        if anon_rows:
+            anon_elo = compute_user_elo(anon_rows, cfg)
+            cur.execute(
+                """
+                SELECT COUNT(*), SUM(solved) FROM game_results WHERE user_id IS NULL
+                """
+            )
+            row = cur.fetchone()
+            attempts = int(row[0] or 0)
+            wins = int(row[1] or 0)
+            win_rate = (wins / attempts * 100.0) if attempts else None
+            cur.execute(
+                """
+                SELECT AVG(p.level)
+                FROM game_results gr
+                JOIN puzzles p ON p.id = gr.puzzle_id
+                WHERE gr.user_id IS NULL
+                """
+            )
+            r2 = cur.fetchone()
+            avg_level_all = float(r2[0]) if r2 and r2[0] is not None else None
+            cur.execute(
+                """
+                SELECT AVG(p.level)
+                FROM game_results gr
+                JOIN puzzles p ON p.id = gr.puzzle_id
+                WHERE gr.user_id IS NULL AND gr.created_at >= datetime('now', ?)
+                """,
+                (f'-{int(cfg.recency_halflife_days)} days',)
+            )
+            r3 = cur.fetchone()
+            avg_level_recent = float(r3[0]) if r3 and r3[0] is not None else None
+            per_user.append({
+                "user_id": 0,
+                "display_name": "Anonymous",
+                "elo": anon_elo,
+                "attempts": attempts,
+                "wins": wins,
+                "win_rate": win_rate,
+                "avg_level_all": avg_level_all,
+                "avg_level_recent": avg_level_recent,
+            })
+
+        # Sort by ELO desc and assign ranks
+        per_user.sort(key=lambda x: x["elo"], reverse=True)
+        for idx, row in enumerate(per_user, start=1):
+            row["rank"] = idx
+
+        # Slice page
+        total = len(per_user)
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_rows = per_user[start:end]
+        num_pages = (total + page_size - 1) // page_size if page_size else 1
+
+        # Current user summary (if signed in)
+        user_summary = None
+        current = session.get("user")
+        if current:
+            cur_uid = current.get("id")
+            for r in per_user:
+                if r["user_id"] == cur_uid:
+                    user_summary = r
+                    break
+
+        return render_template(
+            "leaderboard.html",
+            rows=page_rows,
+            page=page,
+            num_pages=num_pages,
+            total=total,
+            page_size=page_size,
+            user_summary=user_summary,
         )
 
     return app
