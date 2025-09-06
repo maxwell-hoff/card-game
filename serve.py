@@ -3,15 +3,72 @@ from __future__ import annotations
 import argparse
 import json
 from typing import Optional
+import os
 
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 
-from app.db import get_conn, get_random_puzzle, add_game_result, get_puzzle_stats, get_random_puzzle_for_filters, get_puzzle_by_id
+from app.db import get_conn, get_random_puzzle, add_game_result, get_puzzle_stats, get_random_puzzle_for_filters, get_puzzle_by_id, ensure_user, SCHEMA
+
+import firebase_admin
+from firebase_admin import auth as fb_auth, credentials
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2 import id_token as google_id_token
 
 
 def create_app(db_path: str) -> Flask:
     app = Flask(__name__)
+    # Load optional JSON config (fallback to env vars)
+    app_config = {}
+    cfg_path = os.environ.get("APP_CONFIG_JSON", "config.json")
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r") as f:
+                app_config = json.load(f)
+        except Exception:
+            app_config = {}
+
+    # Secret key for session cookies; prefer env, then config, then default
+    app.secret_key = (
+        os.environ.get("FLASK_SECRET_KEY")
+        or app_config.get("FLASK_SECRET_KEY")
+        or "dev-secret-change-me"
+    )
+
     conn = get_conn(db_path)
+    # Ensure schema exists (including users)
+    try:
+        conn.executescript(SCHEMA)
+        conn.commit()
+    except Exception:
+        pass
+
+    # Initialize Firebase Admin if credentials are present or ADC is configured.
+    # If neither is available, we will fallback to verifying ID tokens with google-oauth public certs.
+    if not firebase_admin._apps:
+        cred_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON") or app_config.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+        try:
+            if cred_path and os.path.exists(cred_path):
+                firebase_admin.initialize_app(credentials.Certificate(cred_path))
+            else:
+                # Try ADC; if it fails at runtime we'll still have the manual verifier
+                firebase_admin.initialize_app()
+        except Exception:
+            # Proceed without admin app
+            pass
+
+    # Expose Firebase web config and current session user to templates
+    @app.context_processor
+    def inject_globals():
+        firebase_config = {
+            "apiKey": os.environ.get("FIREBASE_WEB_API_KEY") or app_config.get("FIREBASE_WEB_API_KEY", ""),
+            "authDomain": os.environ.get("FIREBASE_AUTH_DOMAIN") or app_config.get("FIREBASE_AUTH_DOMAIN", ""),
+            "projectId": os.environ.get("FIREBASE_PROJECT_ID") or app_config.get("FIREBASE_PROJECT_ID", ""),
+            "appId": os.environ.get("FIREBASE_APP_ID") or app_config.get("FIREBASE_APP_ID", ""),
+        }
+        return {
+            "firebase_config": firebase_config,
+            "session_user": session.get("user"),
+        }
 
     @app.route("/")
     def index():
@@ -93,6 +150,43 @@ def create_app(db_path: str) -> Flask:
         if turns_filter:
             kwargs["turns"] = turns_filter
         return redirect(url_for("quick", **kwargs))
+
+    @app.route("/api/login", methods=["POST"])
+    def api_login():
+        data = request.get_json(silent=True) or {}
+        id_token = data.get("id_token")
+        requested_display_name = data.get("display_name")
+        if not id_token:
+            return jsonify({"ok": False, "error": "missing_id_token"}), 400
+        decoded = None
+        # First try Firebase Admin
+        if firebase_admin._apps:
+            try:
+                decoded = fb_auth.verify_id_token(id_token)
+            except Exception:
+                decoded = None
+        # Fallback to Google public cert verification
+        if decoded is None:
+            try:
+                request_adapter = google_auth_requests.Request()
+                decoded = google_id_token.verify_firebase_token(id_token, request_adapter)
+            except Exception:
+                return jsonify({"ok": False, "error": "invalid_token"}), 401
+        uid = decoded.get("uid") or decoded.get("user_id")
+        name_from_token = decoded.get("name")
+        display_name = requested_display_name or name_from_token or "Player"
+        user_id = ensure_user(conn, user_key=uid, display_name=display_name)
+        session["user"] = {"id": user_id, "display_name": display_name}
+        return jsonify({"ok": True, "user": session["user"]})
+
+    @app.route("/api/logout", methods=["POST"])
+    def api_logout():
+        session.pop("user", None)
+        return jsonify({"ok": True})
+
+    @app.route("/api/session", methods=["GET"])
+    def api_session():
+        return jsonify({"user": session.get("user")})
 
     @app.route("/ranked")
     def ranked():

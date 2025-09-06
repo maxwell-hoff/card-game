@@ -22,10 +22,69 @@
         <a href="/quick">Quick Play</a>
         <a href="/ranked">Ranked</a>
         <a href="/stats">Stats</a>
+        <span style="float:right">
+          <span id="user-display" style="margin-right:8px;">{% if session_user %}Signed in as {{ session_user.display_name }}{% else %}Not signed in{% endif %}</span>
+          {% if not session_user %}
+          <button id="google-login-btn" style="padding:4px 8px;">Sign in with Google</button>
+          {% else %}
+          <button id="logout-btn" style="padding:4px 8px;">Sign out</button>
+          {% endif %}
+        </span>
       </nav>
     </header>
     <div class="container">
       {% block content %}{% endblock %}
     </div>
+    <script>
+      window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson }};
+    </script>
+    <script type="module">
+      const cfg = window.__FIREBASE_CONFIG__ || {};
+      if (cfg.apiKey && cfg.projectId) {
+        import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js').then(({ initializeApp }) => {
+          import('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js').then(({ getAuth, GoogleAuthProvider, signInWithPopup, signOut }) => {
+            const app = initializeApp(cfg);
+            const auth = getAuth(app);
+            const provider = new GoogleAuthProvider();
+            const loginBtn = document.getElementById('google-login-btn');
+            const logoutBtn = document.getElementById('logout-btn');
+            if (loginBtn) {
+              loginBtn.addEventListener('click', async () => {
+                try {
+                  const res = await signInWithPopup(auth, provider);
+                  const idToken = await res.user.getIdToken();
+                  const displayName = res.user.displayName || 'Player';
+                  const r = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_token: idToken, display_name: displayName })
+                  });
+                  const j = await r.json();
+                  if (j && j.ok) {
+                    location.reload();
+                  } else {
+                    alert('Login failed');
+                  }
+                } catch (e) {
+                  console.error(e);
+                  alert('Login popup failed');
+                }
+              });
+            }
+            if (logoutBtn) {
+              logoutBtn.addEventListener('click', async () => {
+                try {
+                  await signOut(auth);
+                } catch (e) {
+                  // ignore client signout error
+                }
+                await fetch('/api/logout', { method: 'POST' });
+                location.reload();
+              });
+            }
+          });
+        });
+      }
+    </script>
   </body>
 </html>

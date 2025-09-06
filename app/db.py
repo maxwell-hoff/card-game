@@ -33,6 +33,15 @@ CREATE TABLE IF NOT EXISTS game_results (
     created_at TEXT NOT NULL,
     FOREIGN KEY(puzzle_id) REFERENCES puzzles(id)
 );
+
+-- Users table for authentication (no emails/passwords stored)
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_key TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -180,3 +189,29 @@ def get_puzzle_stats(conn: sqlite3.Connection, puzzle_id: int) -> Tuple[int, int
     )
     count, solved = cur.fetchone()
     return count or 0, solved or 0
+
+
+def ensure_user(conn: sqlite3.Connection, user_key: str, display_name: str) -> int:
+    """Create or update a user by opaque user_key. Returns user id.
+
+    user_key should be a non-PII stable identifier (e.g., HMAC of Firebase UID).
+    """
+    cur = conn.cursor()
+    cur.execute("SELECT id, display_name FROM users WHERE user_key=?", (user_key,))
+    row = cur.fetchone()
+    now = datetime.utcnow().isoformat()
+    if row:
+        user_id, existing_display = row
+        if existing_display != display_name and display_name:
+            cur.execute(
+                "UPDATE users SET display_name=?, updated_at=? WHERE id=?",
+                (display_name, now, user_id),
+            )
+            conn.commit()
+        return user_id
+    cur.execute(
+        "INSERT INTO users (user_key, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (user_key, display_name or "Player", now, now),
+    )
+    conn.commit()
+    return cur.lastrowid
