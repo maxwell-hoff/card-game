@@ -2,71 +2,75 @@
 {% block content %}
   <h2>Quick Play</h2>
 
-  <form method="get" action="/quick">
-    <label for="players">Players:</label>
-    <select id="players" name="players">
-      <option value="" {% if not players_filter %}selected{% endif %}>Any</option>
-      {% for p in [1,2,3,4,5] %}
-        <option value="{{ p }}" {% if players_filter==p %}selected{% endif %}>{{ p }}</option>
-      {% endfor %}
-    </select>
-    <label for="turns">Turns:</label>
-    <input id="turns" name="turns" type="number" min="1" value="{{ turns_filter if turns_filter is not none else '' }}" placeholder="Random" />
-    <input type="hidden" name="go" value="1" />
-    <button type="submit">Go</button>
-  </form>
-
-  {% if not requested %}
-    <p>Choose filters and hit Go to get a puzzle.</p>
-  {% elif not puzzle %}
-    <p>No puzzles found. Generate them first.</p>
+  {% if require_login %}
+    <p>You must sign in to play. Use the "Sign in with Google" button in the top-right.</p>
   {% else %}
-    <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
-    <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
-    <div class="grid">
-      {% set rows = layout.rows %}
-      {% set row_res = layout.row_reserves %}
-      {% set col_res = layout.col_reserves %}
-      {% set opp = layout.opponent_row_index %}
-      
-      <!-- Column reserves (Bottom) shown at top with tooltip -->
-      <div class="row">
-        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
-        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
-        {% for c in range(5) %}
-          <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
+    <form method="get" action="/quick">
+      <label for="players">Players:</label>
+      <select id="players" name="players">
+        <option value="" {% if not players_filter %}selected{% endif %}>Any</option>
+        {% for p in [1,2,3,4,5] %}
+          <option value="{{ p }}" {% if players_filter==p %}selected{% endif %}>{{ p }}</option>
         {% endfor %}
-      </div>
-      
-      <!-- Column reserves (Top) shown at top with tooltip -->
-      <div class="row">
-        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
-        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
-        {% for c in range(5) %}
-          <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
-        {% endfor %}
-      </div>
+      </select>
+      <label for="turns">Turns:</label>
+      <input id="turns" name="turns" type="number" min="1" value="{{ turns_filter if turns_filter is not none else '' }}" placeholder="Random" />
+      <input type="hidden" name="go" value="1" />
+      <button type="submit">Go</button>
+    </form>
 
-
-      {% for r in range(rows|length) %}
+    {% if not requested %}
+      <p>Choose filters and hit Go to get a puzzle.</p>
+    {% elif not puzzle %}
+      <p>No puzzles found. Generate them first.</p>
+    {% else %}
+      <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
+      <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
+      <div class="grid">
+        {% set rows = layout.rows %}
+        {% set row_res = layout.row_reserves %}
+        {% set col_res = layout.col_reserves %}
+        {% set opp = layout.opponent_row_index %}
+        
+        <!-- Column reserves (Bottom) shown at top with tooltip -->
         <div class="row">
-          <div class="cell reserve" title="Row reserve bottom">{{ row_res[r][1] }}</div>
-          <div class="cell reserve" title="Row reserve top">{{ row_res[r][0] }}</div>
+          <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+          <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
           {% for c in range(5) %}
-            <div class="cell {% if r==opp %}opponent{% endif %}">{{ rows[r][c] }}</div>
+            <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
           {% endfor %}
         </div>
-      {% endfor %}
-    </div>
+        
+        <!-- Column reserves (Top) shown at top with tooltip -->
+        <div class="row">
+          <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+          <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+          {% for c in range(5) %}
+            <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
+          {% endfor %}
+        </div>
 
-    <form method="post" action="/report">
-      <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
-      {% if players_filter %}<input type="hidden" name="players_filter" value="{{ players_filter }}" />{% endif %}
-      {% if turns_filter %}<input type="hidden" name="turns_filter" value="{{ turns_filter }}" />{% endif %}
-      <label>
-        <input type="checkbox" name="solved" value="1" /> Solved
-      </label>
-      <button type="submit">Submit</button>
-    </form>
+
+        {% for r in range(rows|length) %}
+          <div class="row">
+            <div class="cell reserve" title="Row reserve bottom">{{ row_res[r][1] }}</div>
+            <div class="cell reserve" title="Row reserve top">{{ row_res[r][0] }}</div>
+            {% for c in range(5) %}
+              <div class="cell {% if r==opp %}opponent{% endif %}">{{ rows[r][c] }}</div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+
+      <form method="post" action="/report">
+        <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
+        {% if players_filter %}<input type="hidden" name="players_filter" value="{{ players_filter }}" />{% endif %}
+        {% if turns_filter %}<input type="hidden" name="turns_filter" value="{{ turns_filter }}" />{% endif %}
+        <label>
+          <input type="checkbox" name="solved" value="1" /> Solved
+        </label>
+        <button type="submit">Submit</button>
+      </form>
+    {% endif %}
   {% endif %}
 {% endblock %}

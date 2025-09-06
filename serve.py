@@ -112,6 +112,16 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/quick")
     def quick():
+        # Require sign-in to play/fetch puzzles
+        if not session.get("user"):
+            return render_template(
+                "quick.html",
+                puzzle=None,
+                players_filter=None,
+                turns_filter=None,
+                requested=False,
+                require_login=True,
+            )
         players_q = request.args.get("players")
         turns_q = request.args.get("turns")
         requested = request.args.get("go") == "1"
@@ -136,6 +146,7 @@ def create_app(db_path: str) -> Flask:
                 players_filter=players_filter,
                 turns_filter=turns_filter,
                 requested=False,
+                require_login=False,
             )
 
         puzzle = get_random_puzzle_for_filters(conn, players_filter, turns_filter)
@@ -146,6 +157,7 @@ def create_app(db_path: str) -> Flask:
                 players_filter=players_filter,
                 turns_filter=turns_filter,
                 requested=True,
+                require_login=False,
             )
         layout = json.loads(puzzle.start_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
@@ -159,6 +171,7 @@ def create_app(db_path: str) -> Flask:
             players_filter=players_filter,
             turns_filter=turns_filter,
             requested=True,
+            require_login=False,
         )
 
     @app.route("/puzzle/<int:puzzle_id>")
@@ -173,6 +186,9 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/report", methods=["POST"])
     def report():
+        # Block unauthenticated submissions
+        if not session.get("user"):
+            return redirect(url_for("quick"))
         puzzle_id = int(request.form.get("puzzle_id"))
         solved_flag = request.form.get("solved") == "1"
         seconds = request.form.get("seconds")
