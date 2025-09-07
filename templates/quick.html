@@ -31,7 +31,7 @@
               {% endfor %}
             </ul>
           {% else %}
-            <p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p>
+            <!-- <p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p> -->
           {% endif %}
         </div>
         <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
@@ -67,7 +67,7 @@
     {% endif %}
 
     {% if not requested %}
-      <p>Choose filters and hit Go to get a puzzle.</p>
+      <!-- <p>Choose filters and hit Go to get a puzzle.</p> -->
     {% elif not puzzle %}
       <p>No puzzles found. Generate them first.</p>
     {% else %}
@@ -135,7 +135,7 @@
         if (playersCountEl) playersCountEl.textContent = String(j.players_count || (1 + party.length));
         if (list) {
           if (party.length === 0) {
-            list.innerHTML = '<p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p>';
+            // list.innerHTML = '<p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p>';
           } else {
             const ul = document.createElement('ul');
             ul.style.margin = '0';
