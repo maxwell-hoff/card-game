@@ -587,19 +587,22 @@ def get_user_ranked_attempts_wins(conn: sqlite3.Connection, user_id: int) -> Tup
     """Attempts/wins for ranked mode only.
 
     Attempts = ranked sessions where user is inviter or member (active or completed)
-    Wins     = ranked sessions completed
+    Wins     = ranked sessions completed with solved=1
     Plus legacy ranked results without session (distinct puzzle_id)
     """
     cur = conn.cursor()
-    # Sessions attempts and wins (ranked only)
+    # Sessions attempts and wins (ranked only). Count each session once and consider solved=1 as win.
     cur.execute(
         """
         SELECT
             SUM(CASE WHEN s.status IN ('active','completed') THEN 1 ELSE 0 END) AS attempts,
-            SUM(CASE WHEN s.status = 'completed' THEN 1 ELSE 0 END) AS wins
+            SUM(CASE WHEN s.status = 'completed' AND (
+                SELECT MAX(gr.solved) FROM game_results gr WHERE gr.session_id = s.id
+            ) = 1 THEN 1 ELSE 0 END) AS wins
         FROM game_sessions s
-        LEFT JOIN game_session_members m ON m.session_id = s.id
-        WHERE s.mode = 'ranked' AND (s.inviter_id = ? OR m.user_id = ?)
+        WHERE s.mode = 'ranked' AND (s.inviter_id = ? OR EXISTS (
+            SELECT 1 FROM game_session_members m WHERE m.session_id = s.id AND m.user_id = ?
+        ))
         """,
         (user_id, user_id),
     )
@@ -826,19 +829,22 @@ def get_user_attempts_wins_including_sessions(
 
     Attempts = sessions where user is inviter or member (active or completed)
                + legacy results without session (distinct puzzle_id)
-    Wins     = sessions completed
+    Wins     = sessions completed with a solved=1 result
                + legacy results without session where solved=1 (distinct puzzle_id)
     """
     cur = conn.cursor()
-    # Sessions attempts and wins (all modes)
+    # Sessions attempts and wins (all modes). Count each session once and consider solved=1 as win.
     cur.execute(
         """
         SELECT
             SUM(CASE WHEN s.status IN ('active','completed') THEN 1 ELSE 0 END) AS attempts,
-            SUM(CASE WHEN s.status = 'completed' THEN 1 ELSE 0 END) AS wins
+            SUM(CASE WHEN s.status = 'completed' AND (
+                SELECT MAX(gr.solved) FROM game_results gr WHERE gr.session_id = s.id
+            ) = 1 THEN 1 ELSE 0 END) AS wins
         FROM game_sessions s
-        LEFT JOIN game_session_members m ON m.session_id = s.id
-        WHERE (s.inviter_id = ? OR m.user_id = ?)
+        WHERE (s.inviter_id = ? OR EXISTS (
+            SELECT 1 FROM game_session_members m WHERE m.session_id = s.id AND m.user_id = ?
+        ))
         """,
         (user_id, user_id),
     )

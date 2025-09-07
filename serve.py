@@ -304,6 +304,13 @@ def create_app(db_path: str) -> Flask:
             update_session_result(conn, sid, solved=solved_flag, seconds=seconds_val, user_id=user_id)
             if solved_flag:
                 complete_session(conn, sid)
+            # Decide where to redirect based on session mode
+            cur = conn.cursor()
+            cur.execute("SELECT mode FROM game_sessions WHERE id = ?", (sid,))
+            r = cur.fetchone()
+            mode = r[0] if r else 'quick'
+            if mode == 'ranked':
+                return redirect(url_for("ranked"))
         else:
             # Legacy fallback without session
             add_game_result(conn, puzzle_id, solved_flag, seconds_val, user_id=user_id)
