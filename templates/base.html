@@ -28,6 +28,7 @@
           {% if not session_user %}
           <button id="google-login-btn" style="padding:4px 8px;">Sign in with Google</button>
           {% else %}
+          <button id="invites-btn" style="padding:4px 8px; display:none; margin-right:8px;">Invites</button>
           <button id="logout-btn" style="padding:4px 8px;">Sign out</button>
           {% endif %}
         </span>
@@ -35,6 +36,18 @@
     </header>
     <div class="container">
       {% block content %}{% endblock %}
+    </div>
+    <!-- Simple invites modal -->
+    <div id="invite-modal" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background: rgba(0,0,0,0.4);">
+      <div style="background:#fff; width: 420px; max-width: 95vw; margin: 10% auto; padding: 16px; border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.3);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0;">Invites</h3>
+          <button id="invite-modal-close" style="padding:4px 8px;">Close</button>
+        </div>
+        <div id="invite-list">
+          <p>No invites.</p>
+        </div>
+      </div>
     </div>
     <script>
       window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson }};
@@ -137,6 +150,103 @@
                 dlog('POST /api/logout status', r.status);
                 location.reload();
               });
+            }
+
+            // --- Invites UX ---
+            const invitesBtn = document.getElementById('invites-btn');
+            const inviteModal = document.getElementById('invite-modal');
+            const inviteList = document.getElementById('invite-list');
+            const inviteModalClose = document.getElementById('invite-modal-close');
+            let knownInviteIds = new Set();
+            let invitePollTimer = null;
+
+            function renderInvites(invites) {
+              if (!inviteList) return;
+              if (!invites || invites.length === 0) {
+                inviteList.innerHTML = '<p>No invites.</p>';
+                return;
+              }
+              inviteList.innerHTML = '';
+              invites.forEach((inv) => {
+                const row = document.createElement('div');
+                row.style.display = 'flex';
+                row.style.justifyContent = 'space-between';
+                row.style.alignItems = 'center';
+                row.style.margin = '6px 0';
+                const left = document.createElement('div');
+                left.textContent = `${inv.inviter_display} invited you`;
+                const right = document.createElement('div');
+                const btn = document.createElement('button');
+                btn.textContent = 'Accept';
+                btn.style.padding = '4px 8px';
+                btn.addEventListener('click', async () => {
+                  try {
+                    const r = await fetch('/api/invites/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invite_id: inv.id }) });
+                    const j = await r.json();
+                    if (j && j.ok) {
+                      row.remove();
+                      // Optional: refresh party on quick page if present
+                      if (window.refreshParty) window.refreshParty();
+                    } else {
+                      alert('Invite expired or invalid.');
+                    }
+                  } catch (e) {
+                    alert('Failed to accept invite.');
+                  }
+                });
+                right.appendChild(btn);
+                row.appendChild(left);
+                row.appendChild(right);
+                inviteList.appendChild(row);
+              });
+            }
+
+            async function pollInvites() {
+              try {
+                const r = await fetch('/api/invites/pending');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const j = await r.json();
+                const invites = (j && j.ok && Array.isArray(j.invites)) ? j.invites : [];
+                if (invitesBtn) {
+                  invitesBtn.style.display = invites.length > 0 ? 'inline-block' : 'none';
+                  invitesBtn.textContent = invites.length > 0 ? `Invites (${invites.length})` : 'Invites';
+                }
+                // Detect new invites not seen before to trigger popup
+                let hasNew = false;
+                invites.forEach((inv) => {
+                  if (!knownInviteIds.has(inv.id)) {
+                    hasNew = true;
+                    knownInviteIds.add(inv.id);
+                  }
+                });
+                if (hasNew && inviteModal) {
+                  renderInvites(invites);
+                  inviteModal.style.display = 'block';
+                }
+              } catch (e) {
+                // ignore
+              } finally {
+                invitePollTimer = setTimeout(pollInvites, 8000);
+              }
+            }
+
+            if (invitesBtn && inviteModal && inviteModalClose) {
+              invitesBtn.addEventListener('click', async () => {
+                try {
+                  const r = await fetch('/api/invites/pending');
+                  const j = await r.json().catch(() => null);
+                  const invites = (j && j.ok) ? j.invites : [];
+                  renderInvites(invites);
+                } catch (_) {
+                  renderInvites([]);
+                }
+                inviteModal.style.display = 'block';
+              });
+              inviteModalClose.addEventListener('click', () => {
+                inviteModal.style.display = 'none';
+              });
+              // Begin polling for real-time-like notifications
+              pollInvites();
             }
           }).catch((err) => {
             console.error('[AUTH] Failed to load firebase-auth.js', err);
