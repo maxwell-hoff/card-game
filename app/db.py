@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS game_results (
     user_id INTEGER,
     solved INTEGER NOT NULL,
     seconds INTEGER,
+    ranked INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     FOREIGN KEY(puzzle_id) REFERENCES puzzles(id),
     FOREIGN KEY(user_id) REFERENCES users(id)
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS game_sessions (
     puzzle_id INTEGER NOT NULL,
     expected_turns INTEGER NOT NULL,
     inviter_id INTEGER NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'quick', -- quick | ranked
     status TEXT NOT NULL DEFAULT 'active', -- active | completed
     started_at TEXT NOT NULL,
     completed_at TEXT,
@@ -83,6 +85,7 @@ CREATE TABLE IF NOT EXISTS game_session_members (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON game_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_inviter ON game_sessions(inviter_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_mode ON game_sessions(mode);
 """
 
 
@@ -141,6 +144,7 @@ def ensure_migrations(conn: sqlite3.Connection) -> None:
             puzzle_id INTEGER NOT NULL,
             expected_turns INTEGER NOT NULL,
             inviter_id INTEGER NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'quick',
             status TEXT NOT NULL DEFAULT 'active',
             started_at TEXT NOT NULL,
             completed_at TEXT,
@@ -162,12 +166,19 @@ def ensure_migrations(conn: sqlite3.Connection) -> None:
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON game_sessions(status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_inviter ON game_sessions(inviter_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_mode ON game_sessions(mode)")
     # Add session_id column to game_results if missing
     cur.execute("PRAGMA table_info(game_results)")
     cols_gr = [r[1] for r in cur.fetchall()]
     if "session_id" not in cols_gr:
         cur.execute("ALTER TABLE game_results ADD COLUMN session_id INTEGER")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_game_results_session_id ON game_results(session_id)")
+    # Add ranked column to game_results if missing
+    cur.execute("PRAGMA table_info(game_results)")
+    cols_gr2 = [r[1] for r in cur.fetchall()]
+    if "ranked" not in cols_gr2:
+        cur.execute("ALTER TABLE game_results ADD COLUMN ranked INTEGER NOT NULL DEFAULT 0")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_game_results_ranked ON game_results(ranked)")
     # Add user_code column to users if missing and backfill with unique codes
     cur.execute("PRAGMA table_info(users)")
     cols_users = [r[1] for r in cur.fetchall()]
@@ -491,16 +502,17 @@ def create_game_session(
     puzzle_id: int,
     expected_turns: int,
     member_user_ids: List[int],
+    mode: str = 'quick',
 ) -> int:
     """Create a session, snapshot members (including inviter), and record a started attempt as failed until solved."""
     now = datetime.utcnow().isoformat()
     cur = conn.cursor()
     cur.execute(
         """
-        INSERT INTO game_sessions (puzzle_id, expected_turns, inviter_id, status, started_at)
-        VALUES (?, ?, ?, 'active', ?)
+        INSERT INTO game_sessions (puzzle_id, expected_turns, inviter_id, mode, status, started_at)
+        VALUES (?, ?, ?, ?, 'active', ?)
         """,
-        (puzzle_id, expected_turns, inviter_id, now),
+        (puzzle_id, expected_turns, inviter_id, mode, now),
     )
     session_id = cur.lastrowid
     # Insert members: inviter + unique invitees
@@ -516,8 +528,8 @@ def create_game_session(
         )
     # Record a started attempt as unsolved to affect stats until solved
     cur.execute(
-        "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, created_at, session_id) VALUES (?, NULL, 0, NULL, ?, ?)",
-        (puzzle_id, now, session_id),
+        "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, ranked, created_at, session_id) VALUES (?, NULL, 0, NULL, ?, ?, ?)",
+        (puzzle_id, 1 if mode == 'ranked' else 0, now, session_id),
     )
     conn.commit()
     return session_id
@@ -543,107 +555,71 @@ def get_active_sessions_for_user(
     return cur.fetchall()
 
 
-def get_session_members_with_names(
-    conn: sqlite3.Connection, session_id: int
-) -> List[Tuple[int, str]]:
+def get_active_ranked_sessions_for_user(
+    conn: sqlite3.Connection,
+    user_id: int,
+) -> List[Tuple[int, int, int, str]]:
+    """Active ranked sessions where user is inviter or member."""
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT u.id, u.display_name
-        FROM game_session_members sm
-        JOIN users u ON u.id = sm.user_id
-        WHERE sm.session_id = ?
-        ORDER BY u.id ASC
+        SELECT s.id, s.puzzle_id, s.expected_turns, s.started_at
+        FROM game_sessions s
+        LEFT JOIN game_session_members m ON m.session_id = s.id
+        WHERE s.status = 'active' AND s.mode = 'ranked' AND (s.inviter_id = ? OR m.user_id = ?)
+        GROUP BY s.id
+        ORDER BY s.started_at DESC, s.id DESC
         """,
-        (session_id,),
+        (user_id, user_id),
     )
-    rows = cur.fetchall()
-    return [(int(r[0]), str(r[1])) for r in rows]
+    return cur.fetchall()
 
 
-def get_session_by_id(conn: sqlite3.Connection, session_id: int) -> Optional[Tuple[int, int, int, int, str, Optional[str], str]]:
-    """Return (id, puzzle_id, expected_turns, inviter_id, status, completed_at, started_at) or None."""
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, puzzle_id, expected_turns, inviter_id, status, completed_at, started_at FROM game_sessions WHERE id = ?",
-        (session_id,),
-    )
-    row = cur.fetchone()
-    return row
-
-
-def complete_session(conn: sqlite3.Connection, session_id: int) -> None:
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE game_sessions SET status = 'completed', completed_at = ? WHERE id = ?",
-        (datetime.utcnow().isoformat(), session_id),
-    )
-    conn.commit()
-
-
-def update_session_result(
+def get_single_active_ranked_session_for_user(
     conn: sqlite3.Connection,
-    session_id: int,
-    solved: bool,
-    seconds: Optional[int],
-    user_id: Optional[int],
-) -> None:
-    """Update the single game_results row tied to this session. If none exists, insert it."""
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM game_results WHERE session_id = ?", (session_id,))
-    row = cur.fetchone()
-    now = datetime.utcnow().isoformat()
-    if row:
-        cur.execute(
-            "UPDATE game_results SET solved = ?, seconds = ?, user_id = ?, created_at = ? WHERE id = ?",
-            (1 if solved else 0, seconds, user_id, now, int(row[0])),
-        )
-    else:
-        # fallback insert
-        cur.execute(
-            "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, created_at, session_id) SELECT puzzle_id, ?, ?, ?, ?, ? FROM game_sessions WHERE id = ?",
-            (user_id, 1 if solved else 0, seconds, now, session_id, session_id),
-        )
-    conn.commit()
+    user_id: int,
+) -> Optional[Tuple[int, int, int, str]]:
+    rows = get_active_ranked_sessions_for_user(conn, user_id)
+    return rows[0] if rows else None
 
 
-def get_user_attempts_wins_including_sessions(
-    conn: sqlite3.Connection, user_id: int
-) -> Tuple[int, int]:
-    """Compute attempts and wins for a user, counting unfinished sessions as failures.
+def get_user_ranked_attempts_wins(conn: sqlite3.Connection, user_id: int) -> Tuple[int, int]:
+    """Attempts/wins for ranked mode only.
 
-    Attempts = sessions where user is inviter or member (active or completed)
-               + legacy results without session (distinct puzzle_id)
-    Wins     = sessions completed
-               + legacy results without session where solved=1 (distinct puzzle_id)
+    Attempts = ranked sessions where user is inviter or member (active or completed)
+    Wins     = ranked sessions completed with solved=1
+    Plus legacy ranked results without session (distinct puzzle_id)
     """
     cur = conn.cursor()
-    # Sessions attempts and wins
+    # Sessions attempts and wins (ranked only). Count each session once and consider solved=1 as win.
     cur.execute(
         """
         SELECT
             SUM(CASE WHEN s.status IN ('active','completed') THEN 1 ELSE 0 END) AS attempts,
-            SUM(CASE WHEN s.status = 'completed' THEN 1 ELSE 0 END) AS wins
+            SUM(CASE WHEN s.status = 'completed' AND (
+                SELECT MAX(gr.solved) FROM game_results gr WHERE gr.session_id = s.id
+            ) = 1 THEN 1 ELSE 0 END) AS wins
         FROM game_sessions s
-        LEFT JOIN game_session_members m ON m.session_id = s.id
-        WHERE (s.inviter_id = ? OR m.user_id = ?)
+        WHERE s.mode = 'ranked' AND (s.inviter_id = ? OR EXISTS (
+            SELECT 1 FROM game_session_members m WHERE m.session_id = s.id AND m.user_id = ?
+        ))
         """,
         (user_id, user_id),
     )
     row = cur.fetchone() or (0, 0)
     sess_attempts = int(row[0] or 0)
     sess_wins = int(row[1] or 0)
-    # Legacy attempts and wins (distinct puzzles) without session
+    # Legacy ranked results without session (if any)
     cur.execute(
         """
-        SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE user_id = ? AND session_id IS NULL
+        SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE user_id = ? AND session_id IS NULL AND ranked = 1
         """,
         (user_id,),
     )
     legacy_attempts = int((cur.fetchone() or (0,))[0] or 0)
     cur.execute(
         """
-        SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE user_id = ? AND session_id IS NULL AND solved = 1
+        SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE user_id = ? AND session_id IS NULL AND ranked = 1 AND solved = 1
         """,
         (user_id,),
     )
@@ -662,6 +638,29 @@ def get_user_results_with_puzzle_meta(
         FROM game_results gr
         JOIN puzzles p ON p.id = gr.puzzle_id
         WHERE gr.user_id = ?
+        ORDER BY gr.created_at ASC, gr.id ASC
+        """,
+        (user_id,),
+    )
+    return cur.fetchall()
+
+
+def get_user_ranked_results_with_puzzle_meta(
+    conn: sqlite3.Connection, user_id: int
+) -> List[Tuple[str, int, int, Optional[int]]]:
+    """Like get_user_results_with_puzzle_meta, but only ranked results.
+
+    Includes both session-bound results (where the session mode is ranked) and legacy results marked ranked=1.
+    Only rows attributed to the user_id are counted.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT gr.created_at, gr.solved, p.level, gr.seconds
+        FROM game_results gr
+        JOIN puzzles p ON p.id = gr.puzzle_id
+        LEFT JOIN game_sessions s ON s.id = gr.session_id
+        WHERE gr.user_id = ? AND (gr.ranked = 1 OR (s.mode = 'ranked'))
         ORDER BY gr.created_at ASC, gr.id ASC
         """,
         (user_id,),
@@ -711,3 +710,198 @@ def get_user_basic_stats(
     row3 = cur.fetchone()
     avg_level_recent = float(row3[0]) if row3 and row3[0] is not None else None
     return attempts, wins, win_rate, avg_level_all, avg_level_recent
+
+
+def get_user_ranked_history_puzzle_ids(conn: sqlite3.Connection, user_id: int) -> List[int]:
+    """List of puzzle_ids the user has participated in via ranked sessions (inviter or member), plus legacy ranked results."""
+    cur = conn.cursor()
+    # From ranked sessions
+    cur.execute(
+        """
+        SELECT DISTINCT s.puzzle_id
+        FROM game_sessions s
+        LEFT JOIN game_session_members m ON m.session_id = s.id
+        WHERE s.mode = 'ranked' AND (s.inviter_id = ? OR m.user_id = ?)
+        """,
+        (user_id, user_id),
+    )
+    ids = {int(r[0]) for r in cur.fetchall()}
+    # From legacy ranked results without session
+    cur.execute(
+        """
+        SELECT DISTINCT puzzle_id FROM game_results WHERE user_id = ? AND session_id IS NULL AND ranked = 1
+        """,
+        (user_id,),
+    )
+    for r in cur.fetchall():
+        ids.add(int(r[0]))
+    return sorted(list(ids))
+
+
+def get_random_puzzle_for_level_and_players_excluding(
+    conn: sqlite3.Connection,
+    level: int,
+    players: int,
+    exclude_puzzle_ids: List[int],
+) -> Optional[StoredPuzzle]:
+    """Return a random puzzle for level and players, excluding specified puzzle ids."""
+    cur = conn.cursor()
+    if exclude_puzzle_ids:
+        qmarks = ",".join(["?"] * len(exclude_puzzle_ids))
+        cur.execute(
+            f"""
+            SELECT id, players, level, num_actions, opponent_row_index, suite_row_index, column_index, start_layout_json, solved_layout_json, actions_json
+            FROM puzzles
+            WHERE level = ? AND players = ? AND id NOT IN ({qmarks})
+            ORDER BY RANDOM() LIMIT 1
+            """,
+            (level, players, *exclude_puzzle_ids),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, players, level, num_actions, opponent_row_index, suite_row_index, column_index, start_layout_json, solved_layout_json, actions_json
+            FROM puzzles
+            WHERE level = ? AND players = ?
+            ORDER BY RANDOM() LIMIT 1
+            """,
+            (level, players),
+        )
+    row = cur.fetchone()
+    return StoredPuzzle(*row) if row else None
+
+
+def update_session_result(
+    conn: sqlite3.Connection,
+    session_id: int,
+    solved: bool,
+    seconds: Optional[int],
+    user_id: Optional[int],
+) -> None:
+    """Update the single game_results row tied to this session. If none exists, insert it."""
+    cur = conn.cursor()
+    # Determine mode and puzzle for this session
+    cur.execute("SELECT mode, puzzle_id FROM game_sessions WHERE id = ?", (session_id,))
+    sess_row = cur.fetchone()
+    sess_mode = str(sess_row[0]) if sess_row else 'quick'
+    sess_puzzle_id = int(sess_row[1]) if sess_row else None
+    cur.execute("SELECT id FROM game_results WHERE session_id = ?", (session_id,))
+    row = cur.fetchone()
+    now = datetime.utcnow().isoformat()
+    if row:
+        cur.execute(
+            "UPDATE game_results SET solved = ?, seconds = ?, user_id = ?, ranked = ?, created_at = ? WHERE id = ?",
+            (1 if solved else 0, seconds, user_id, 1 if sess_mode == 'ranked' else 0, now, int(row[0])),
+        )
+    else:
+        # fallback insert
+        cur.execute(
+            "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, ranked, created_at, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (sess_puzzle_id, user_id, 1 if solved else 0, seconds, 1 if sess_mode == 'ranked' else 0, now, session_id),
+        )
+    conn.commit()
+
+
+def get_active_quick_sessions_for_user(
+    conn: sqlite3.Connection,
+    user_id: int,
+) -> List[Tuple[int, int, int, str]]:
+    """Active quick sessions where user is inviter or member."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT s.id, s.puzzle_id, s.expected_turns, s.started_at
+        FROM game_sessions s
+        LEFT JOIN game_session_members m ON m.session_id = s.id
+        WHERE s.status = 'active' AND s.mode = 'quick' AND (s.inviter_id = ? OR m.user_id = ?)
+        GROUP BY s.id
+        ORDER BY s.started_at DESC, s.id DESC
+        """,
+        (user_id, user_id),
+    )
+    return cur.fetchall()
+
+
+def get_user_attempts_wins_including_sessions(
+    conn: sqlite3.Connection, user_id: int
+) -> Tuple[int, int]:
+    """Compute attempts and wins for a user, counting unfinished sessions as failures.
+
+    Attempts = sessions where user is inviter or member (active or completed)
+               + legacy results without session (distinct puzzle_id)
+    Wins     = sessions completed with a solved=1 result
+               + legacy results without session where solved=1 (distinct puzzle_id)
+    """
+    cur = conn.cursor()
+    # Sessions attempts and wins (all modes). Count each session once and consider solved=1 as win.
+    cur.execute(
+        """
+        SELECT
+            SUM(CASE WHEN s.status IN ('active','completed') THEN 1 ELSE 0 END) AS attempts,
+            SUM(CASE WHEN s.status = 'completed' AND (
+                SELECT MAX(gr.solved) FROM game_results gr WHERE gr.session_id = s.id
+            ) = 1 THEN 1 ELSE 0 END) AS wins
+        FROM game_sessions s
+        WHERE (s.inviter_id = ? OR EXISTS (
+            SELECT 1 FROM game_session_members m WHERE m.session_id = s.id AND m.user_id = ?
+        ))
+        """,
+        (user_id, user_id),
+    )
+    row = cur.fetchone() or (0, 0)
+    sess_attempts = int(row[0] or 0)
+    sess_wins = int(row[1] or 0)
+    # Legacy attempts and wins (distinct puzzles) without session
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE user_id = ? AND session_id IS NULL
+        """,
+        (user_id,),
+    )
+    legacy_attempts = int((cur.fetchone() or (0,))[0] or 0)
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE user_id = ? AND session_id IS NULL AND solved = 1
+        """,
+        (user_id,),
+    )
+    legacy_wins = int((cur.fetchone() or (0,))[0] or 0)
+    return sess_attempts + legacy_attempts, sess_wins + legacy_wins
+
+
+def get_session_members_with_names(
+    conn: sqlite3.Connection, session_id: int
+) -> List[Tuple[int, str]]:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT u.id, u.display_name
+        FROM game_session_members sm
+        JOIN users u ON u.id = sm.user_id
+        WHERE sm.session_id = ?
+        ORDER BY u.id ASC
+        """,
+        (session_id,),
+    )
+    rows = cur.fetchall()
+    return [(int(r[0]), str(r[1])) for r in rows]
+
+
+def get_session_by_id(conn: sqlite3.Connection, session_id: int) -> Optional[Tuple[int, int, int, int, str, Optional[str], str]]:
+    """Return (id, puzzle_id, expected_turns, inviter_id, status, completed_at, started_at) or None."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, puzzle_id, expected_turns, inviter_id, status, completed_at, started_at FROM game_sessions WHERE id = ?",
+        (session_id,),
+    )
+    row = cur.fetchone()
+    return row
+
+
+def complete_session(conn: sqlite3.Connection, session_id: int) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE game_sessions SET status = 'completed', completed_at = ? WHERE id = ?",
+        (datetime.utcnow().isoformat(), session_id),
+    )
+    conn.commit()
