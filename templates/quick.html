@@ -19,7 +19,7 @@
             <strong>Players:</strong> <span id="players-count">{{ players_count }}</span>
           </div>
           <div>
-            <button id="invite-add-btn" title="Invite by display name" style="padding:4px 8px;">+ Invite</button>
+            <button id="invite-add-btn" title="Invite by user ID code" style="padding:4px 8px;">+ Invite</button>
           </div>
         </div>
         <div id="party-list" style="margin-top:8px;">
@@ -160,10 +160,10 @@
     if (inviteAddBtn) {
       inviteAddBtn.addEventListener('click', async (e) => {
         e.preventDefault();
-        const name = prompt('Invite player by display name:');
-        if (!name) return;
+        const code = prompt('Invite player by user ID code (e.g., ABC234):');
+        if (!code) return;
         try {
-          const r = await fetch('/api/invites/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ display_name: name }) });
+          const r = await fetch('/api/invites/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_code: code }) });
           const j = await r.json().catch(() => null);
           if (j && j.ok) {
             if (inviteMsg) inviteMsg.textContent = 'Invite sent. Expires in 5 minutes.';
