@@ -22,6 +22,7 @@ from app.db import (
     get_all_users,
     get_user_results_with_puzzle_meta,
     get_user_basic_stats,
+    get_user_attempts_wins_including_sessions,
     get_user_by_display_name,
     create_invite,
     get_pending_invites_for_user,
@@ -472,13 +473,17 @@ def create_app(db_path: str) -> Flask:
         for uid, display_name in users:
             rows = get_user_results_with_puzzle_meta(conn, uid)
             elo_value = compute_user_elo(rows, cfg)
-            attempts, wins, win_rate, avg_level_all, avg_level_recent = get_user_basic_stats(conn, uid, recent_days=int(cfg.recency_halflife_days))
+            # Compute attempts and wins including sessions; compute win_rate to match stats definition
+            attempts_all, wins_all = get_user_attempts_wins_including_sessions(conn, uid)
+            win_rate = (wins_all / attempts_all * 100.0) if attempts_all else None
+            # Keep basic stats averages as before
+            _, _, _, avg_level_all, avg_level_recent = get_user_basic_stats(conn, uid, recent_days=int(cfg.recency_halflife_days))
             per_user.append({
                 "user_id": uid,
                 "display_name": display_name,
                 "elo": elo_value,
-                "attempts": attempts,
-                "wins": wins,
+                "attempts": attempts_all,
+                "wins": wins_all,
                 "win_rate": win_rate,
                 "avg_level_all": avg_level_all,
                 "avg_level_recent": avg_level_recent,

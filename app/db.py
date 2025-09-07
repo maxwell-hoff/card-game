@@ -554,6 +554,50 @@ def update_session_result(
     conn.commit()
 
 
+def get_user_attempts_wins_including_sessions(
+    conn: sqlite3.Connection, user_id: int
+) -> Tuple[int, int]:
+    """Compute attempts and wins for a user, counting unfinished sessions as failures.
+
+    Attempts = sessions where user is inviter or member (active or completed)
+               + legacy results without session (distinct puzzle_id)
+    Wins     = sessions completed
+               + legacy results without session where solved=1 (distinct puzzle_id)
+    """
+    cur = conn.cursor()
+    # Sessions attempts and wins
+    cur.execute(
+        """
+        SELECT
+            SUM(CASE WHEN s.status IN ('active','completed') THEN 1 ELSE 0 END) AS attempts,
+            SUM(CASE WHEN s.status = 'completed' THEN 1 ELSE 0 END) AS wins
+        FROM game_sessions s
+        LEFT JOIN game_session_members m ON m.session_id = s.id
+        WHERE (s.inviter_id = ? OR m.user_id = ?)
+        """,
+        (user_id, user_id),
+    )
+    row = cur.fetchone() or (0, 0)
+    sess_attempts = int(row[0] or 0)
+    sess_wins = int(row[1] or 0)
+    # Legacy attempts and wins (distinct puzzles) without session
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE user_id = ? AND session_id IS NULL
+        """,
+        (user_id,),
+    )
+    legacy_attempts = int((cur.fetchone() or (0,))[0] or 0)
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT puzzle_id) FROM game_results WHERE user_id = ? AND session_id IS NULL AND solved = 1
+        """,
+        (user_id,),
+    )
+    legacy_wins = int((cur.fetchone() or (0,))[0] or 0)
+    return sess_attempts + legacy_attempts, sess_wins + legacy_wins
+
+
 def get_user_results_with_puzzle_meta(
     conn: sqlite3.Connection, user_id: int
 ) -> List[Tuple[str, int, int, Optional[int]]]:
