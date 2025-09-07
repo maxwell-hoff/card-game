@@ -27,6 +27,12 @@ from app.db import (
     get_pending_invites_for_user,
     accept_invite,
     get_party_for_inviter,
+    create_game_session,
+    get_active_sessions_for_user,
+    get_session_members_with_names,
+    get_session_by_id,
+    complete_session,
+    update_session_result,
 )
 from app.elo import EloConfig, compute_user_elo
 
@@ -136,6 +142,7 @@ def create_app(db_path: str) -> Flask:
         party = [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         turns_q = request.args.get("turns")
         requested = request.args.get("go") == "1"
+        session_q = request.args.get("session_id")
         try:
             turns_filter = int(turns_q) if turns_q else None
         except ValueError:
@@ -150,8 +157,64 @@ def create_app(db_path: str) -> Flask:
         if players_filter > 5:
             players_filter = 5
 
-        # If user hasn't clicked Go yet, do not fetch or render a puzzle
+        # If resuming a session by id, load that specific puzzle
+        if session_q:
+            try:
+                resume_session_id = int(session_q)
+            except Exception:
+                return redirect(url_for("quick"))
+            sess = get_session_by_id(conn, resume_session_id)
+            if not sess:
+                return redirect(url_for("quick"))
+            sess_id, sess_puzzle_id, sess_expected_turns, sess_inviter_id, sess_status, sess_completed_at, sess_started_at = sess
+            # Must be active to resume
+            if sess_status != 'active':
+                return redirect(url_for("quick"))
+            # Verify membership
+            member_rows = get_session_members_with_names(conn, sess_id)
+            member_ids = [m[0] for m in member_rows]
+            if inviter_id not in ([sess_inviter_id] + member_ids):
+                return redirect(url_for("quick"))
+            sp = get_puzzle_by_id(conn, sess_puzzle_id)
+            if not sp:
+                return redirect(url_for("quick"))
+            layout = json.loads(sp.start_layout_json)
+            count, solved = get_puzzle_stats(conn, sp.id)
+            solve_pct = (solved / count * 100.0) if count else None
+            players_count_from_session = max(1, min(5, len(member_rows)))
+            return render_template(
+                "quick.html",
+                puzzle=sp,
+                layout=layout,
+                expected_turns=sp.num_actions,
+                solve_pct=solve_pct,
+                turns_filter=turns_filter,
+                requested=True,
+                require_login=False,
+                party=[{"user_id": uid, "display_name": name} for (uid, name) in member_rows if uid != inviter_id],
+                players_count=players_count_from_session,
+                session_id=sess_id,
+            )
+
+        # If user hasn't clicked Go yet, show setup and any resumable sessions
         if not requested:
+            # Build active sessions table
+            active = []
+            if inviter_id:
+                rows = get_active_sessions_for_user(conn, inviter_id)
+                for sid, pid, exp_turns, started_at in rows:
+                    members = get_session_members_with_names(conn, sid)
+                    players_cnt = max(1, min(5, len(members)))
+                    # Other players (exclude self by name/id)
+                    other_names = [name for (uid, name) in members if uid != inviter_id]
+                    active.append({
+                        "session_id": sid,
+                        "puzzle_id": pid,
+                        "players_count": players_cnt,
+                        "others": other_names,
+                        "expected_turns": exp_turns,
+                        "started_at": started_at,
+                    })
             return render_template(
                 "quick.html",
                 puzzle=None,
@@ -160,6 +223,7 @@ def create_app(db_path: str) -> Flask:
                 require_login=False,
                 party=party,
                 players_count=players_filter,
+                active_sessions=active,
             )
 
         puzzle = get_random_puzzle_for_filters(conn, players_filter, turns_filter)
@@ -176,6 +240,15 @@ def create_app(db_path: str) -> Flask:
         layout = json.loads(puzzle.start_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
         solve_pct = (solved / count * 100.0) if count else None
+        # Create a session for this new puzzle start
+        member_ids = [m[0] for m in party_rows]
+        session_id = create_game_session(
+            conn,
+            inviter_id=inviter_id or 0,
+            puzzle_id=puzzle.id,
+            expected_turns=puzzle.num_actions,
+            member_user_ids=member_ids,
+        )
         return render_template(
             "quick.html",
             puzzle=puzzle,
@@ -187,6 +260,7 @@ def create_app(db_path: str) -> Flask:
             require_login=False,
             party=party,
             players_count=players_filter,
+            session_id=session_id,
         )
 
     @app.route("/puzzle/<int:puzzle_id>")
@@ -209,9 +283,23 @@ def create_app(db_path: str) -> Flask:
         seconds = request.form.get("seconds")
         players_filter = request.form.get("players_filter")
         turns_filter = request.form.get("turns_filter")
+        session_id_q = request.form.get("session_id")
         seconds_val: Optional[int] = int(seconds) if seconds else None
         user_id = (session.get("user") or {}).get("id")
-        add_game_result(conn, puzzle_id, solved_flag, seconds_val, user_id=user_id)
+        if session_id_q:
+            try:
+                sid = int(session_id_q)
+            except Exception:
+                sid = None
+        else:
+            sid = None
+        if sid:
+            update_session_result(conn, sid, solved=solved_flag, seconds=seconds_val, user_id=user_id)
+            if solved_flag:
+                complete_session(conn, sid)
+        else:
+            # Legacy fallback without session
+            add_game_result(conn, puzzle_id, solved_flag, seconds_val, user_id=user_id)
         kwargs = {}
         if turns_filter:
             kwargs["turns"] = turns_filter

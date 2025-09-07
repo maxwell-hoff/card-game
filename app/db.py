@@ -59,6 +59,28 @@ CREATE TABLE IF NOT EXISTS invites (
 );
 CREATE INDEX IF NOT EXISTS idx_invites_invitee_status ON invites(invitee_id, status);
 CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at);
+
+-- Sessions to allow resuming puzzles
+CREATE TABLE IF NOT EXISTS game_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    puzzle_id INTEGER NOT NULL,
+    expected_turns INTEGER NOT NULL,
+    inviter_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active', -- active | completed
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY(puzzle_id) REFERENCES puzzles(id),
+    FOREIGN KEY(inviter_id) REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS game_session_members (
+    session_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    PRIMARY KEY(session_id, user_id),
+    FOREIGN KEY(session_id) REFERENCES game_sessions(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON game_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_inviter ON game_sessions(inviter_id);
 """
 
 
@@ -109,6 +131,41 @@ def ensure_migrations(conn: sqlite3.Connection) -> None:
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_invitee_status ON invites(invitee_id, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    # Ensure sessions tables exist
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS game_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            puzzle_id INTEGER NOT NULL,
+            expected_turns INTEGER NOT NULL,
+            inviter_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            FOREIGN KEY(puzzle_id) REFERENCES puzzles(id),
+            FOREIGN KEY(inviter_id) REFERENCES users(id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS game_session_members (
+            session_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            PRIMARY KEY(session_id, user_id),
+            FOREIGN KEY(session_id) REFERENCES game_sessions(id),
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON game_sessions(status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_inviter ON game_sessions(inviter_id)")
+    # Add session_id column to game_results if missing
+    cur.execute("PRAGMA table_info(game_results)")
+    cols_gr = [r[1] for r in cur.fetchall()]
+    if "session_id" not in cols_gr:
+        cur.execute("ALTER TABLE game_results ADD COLUMN session_id INTEGER")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_game_results_session_id ON game_results(session_id)")
     conn.commit()
 
 
@@ -373,6 +430,128 @@ def get_party_for_inviter(conn: sqlite3.Connection, inviter_id: int) -> List[Tup
     )
     rows = cur.fetchall()
     return [(int(r[0]), str(r[1])) for r in rows]
+
+
+def create_game_session(
+    conn: sqlite3.Connection,
+    inviter_id: int,
+    puzzle_id: int,
+    expected_turns: int,
+    member_user_ids: List[int],
+) -> int:
+    """Create a session, snapshot members (including inviter), and record a started attempt as failed until solved."""
+    now = datetime.utcnow().isoformat()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO game_sessions (puzzle_id, expected_turns, inviter_id, status, started_at)
+        VALUES (?, ?, ?, 'active', ?)
+        """,
+        (puzzle_id, expected_turns, inviter_id, now),
+    )
+    session_id = cur.lastrowid
+    # Insert members: inviter + unique invitees
+    seen = set()
+    all_members = [inviter_id] + [m for m in (member_user_ids or []) if m not in (inviter_id,)]
+    for uid in all_members:
+        if uid in seen:
+            continue
+        seen.add(uid)
+        cur.execute(
+            "INSERT OR IGNORE INTO game_session_members (session_id, user_id) VALUES (?, ?)",
+            (session_id, uid),
+        )
+    # Record a started attempt as unsolved to affect stats until solved
+    cur.execute(
+        "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, created_at, session_id) VALUES (?, NULL, 0, NULL, ?, ?)",
+        (puzzle_id, now, session_id),
+    )
+    conn.commit()
+    return session_id
+
+
+def get_active_sessions_for_user(
+    conn: sqlite3.Connection,
+    user_id: int,
+) -> List[Tuple[int, int, int, str]]:
+    """Return list of (session_id, puzzle_id, expected_turns, started_at) for active sessions where user is inviter or member."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT s.id, s.puzzle_id, s.expected_turns, s.started_at
+        FROM game_sessions s
+        LEFT JOIN game_session_members m ON m.session_id = s.id
+        WHERE s.status = 'active' AND (s.inviter_id = ? OR m.user_id = ?)
+        GROUP BY s.id
+        ORDER BY s.started_at DESC, s.id DESC
+        """,
+        (user_id, user_id),
+    )
+    return cur.fetchall()
+
+
+def get_session_members_with_names(
+    conn: sqlite3.Connection, session_id: int
+) -> List[Tuple[int, str]]:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT u.id, u.display_name
+        FROM game_session_members sm
+        JOIN users u ON u.id = sm.user_id
+        WHERE sm.session_id = ?
+        ORDER BY u.id ASC
+        """,
+        (session_id,),
+    )
+    rows = cur.fetchall()
+    return [(int(r[0]), str(r[1])) for r in rows]
+
+
+def get_session_by_id(conn: sqlite3.Connection, session_id: int) -> Optional[Tuple[int, int, int, int, str, Optional[str], str]]:
+    """Return (id, puzzle_id, expected_turns, inviter_id, status, completed_at, started_at) or None."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, puzzle_id, expected_turns, inviter_id, status, completed_at, started_at FROM game_sessions WHERE id = ?",
+        (session_id,),
+    )
+    row = cur.fetchone()
+    return row
+
+
+def complete_session(conn: sqlite3.Connection, session_id: int) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE game_sessions SET status = 'completed', completed_at = ? WHERE id = ?",
+        (datetime.utcnow().isoformat(), session_id),
+    )
+    conn.commit()
+
+
+def update_session_result(
+    conn: sqlite3.Connection,
+    session_id: int,
+    solved: bool,
+    seconds: Optional[int],
+    user_id: Optional[int],
+) -> None:
+    """Update the single game_results row tied to this session. If none exists, insert it."""
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM game_results WHERE session_id = ?", (session_id,))
+    row = cur.fetchone()
+    now = datetime.utcnow().isoformat()
+    if row:
+        cur.execute(
+            "UPDATE game_results SET solved = ?, seconds = ?, user_id = ?, created_at = ? WHERE id = ?",
+            (1 if solved else 0, seconds, user_id, now, int(row[0])),
+        )
+    else:
+        # fallback insert
+        cur.execute(
+            "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, created_at, session_id) SELECT puzzle_id, ?, ?, ?, ?, ? FROM game_sessions WHERE id = ?",
+            (user_id, 1 if solved else 0, seconds, now, session_id, session_id),
+        )
+    conn.commit()
 
 
 def get_user_results_with_puzzle_meta(

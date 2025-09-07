@@ -36,6 +36,34 @@
         </div>
         <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
       </div>
+
+      {% if active_sessions and active_sessions|length > 0 %}
+        <h3 style="margin-top:18px;">Resume a puzzle</h3>
+        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse; min-width: 520px;">
+          <thead>
+            <tr>
+              <th align="left">Puzzle ID</th>
+              <th align="left">Players</th>
+              <th align="left">Others</th>
+              <th align="left">Expected Turns</th>
+              <th align="left">Started</th>
+              <th align="left">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in active_sessions %}
+              <tr>
+                <td>{{ s.puzzle_id }}</td>
+                <td>{{ s.players_count }}</td>
+                <td>{% if s.others and s.others|length > 0 %}{{ s.others|join(', ') }}{% else %}-{% endif %}</td>
+                <td>{{ s.expected_turns }}</td>
+                <td>{{ s.started_at }}</td>
+                <td><a href="/quick?session_id={{ s.session_id }}">Resume</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
     {% endif %}
 
     {% if not requested %}
@@ -84,6 +112,7 @@
 
       <form method="post" action="/report">
         <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
+        {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}" />{% endif %}
         {% if turns_filter %}<input type="hidden" name="turns_filter" value="{{ turns_filter }}" />{% endif %}
         <label>
           <input type="checkbox" name="solved" value="1" /> Solved
