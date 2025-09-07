@@ -577,6 +577,33 @@ def create_app(db_path: str) -> Flask:
             elo=elo_value,
         )
 
+    @app.route("/ranked/give_up", methods=["POST"])
+    def ranked_give_up():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        session_id = data.get("session_id")
+        try:
+            session_id = int(session_id)
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_session_id"}), 400
+        sess = get_session_by_id(conn, session_id)
+        if not sess:
+            return jsonify({"ok": False, "error": "session_not_found"}), 404
+        sid, _pid, _exp_turns, inviter_id, status, _completed_at, _started_at = sess
+        if status != 'active':
+            return jsonify({"ok": False, "error": "not_active"}), 400
+        # Verify membership
+        members = get_session_members_with_names(conn, sid)
+        member_ids = [m[0] for m in members]
+        if current.get("id") not in ([inviter_id] + member_ids):
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+        # Mark loss and complete
+        update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
+        complete_session(conn, sid)
+        return jsonify({"ok": True})
+
     @app.route("/stats")
     def stats():
         # Show a simple log summary
