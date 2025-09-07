@@ -5,42 +5,45 @@
   {% if require_login %}
     <p>You must sign in to play. Use the "Sign in with Google" button in the top-right.</p>
   {% else %}
-    <form method="get" action="/quick">
-      <label for="turns">Turns:</label>
-      <input id="turns" name="turns" type="number" min="1" value="{{ turns_filter if turns_filter is not none else '' }}" placeholder="Random" />
-      <input type="hidden" name="go" value="1" />
-      <button type="submit">Go</button>
-    </form>
+    {% if not puzzle %}
+      <form method="get" action="/quick">
+        <label for="turns">Turns:</label>
+        <input id="turns" name="turns" type="number" min="1" value="{{ turns_filter if turns_filter is not none else '' }}" placeholder="Random" />
+        <input type="hidden" name="go" value="1" />
+        <button type="submit">Go</button>
+      </form>
 
-    <div style="margin-top:12px; padding:8px; background:#f7f7f7; border:1px solid #ddd; border-radius:4px; max-width:520px;">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <strong>Players:</strong> <span id="players-count">{{ players_count }}</span>
+      <div style="margin-top:12px; padding:8px; background:#f7f7f7; border:1px solid #ddd; border-radius:4px; max-width:520px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong>Players:</strong> <span id="players-count">{{ players_count }}</span>
+          </div>
+          <div>
+            <button id="invite-add-btn" title="Invite by display name" style="padding:4px 8px;">+ Invite</button>
+          </div>
         </div>
-        <div>
-          <button id="invite-add-btn" title="Invite by display name" style="padding:4px 8px;">+ Invite</button>
+        <div id="party-list" style="margin-top:8px;">
+          {% if party and party|length > 0 %}
+            <ul style="margin:0; padding-left:18px;">
+              <li><em>You</em></li>
+              {% for m in party %}
+                <li>{{ m.display_name }}</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p>
+          {% endif %}
         </div>
+        <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
       </div>
-      <div id="party-list" style="margin-top:8px;">
-        {% if party and party|length > 0 %}
-          <ul style="margin:0; padding-left:18px;">
-            <li><em>You</em></li>
-            {% for m in party %}
-              <li>{{ m.display_name }}</li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p>
-        {% endif %}
-      </div>
-      <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
-    </div>
+    {% endif %}
 
     {% if not requested %}
       <p>Choose filters and hit Go to get a puzzle.</p>
     {% elif not puzzle %}
       <p>No puzzles found. Generate them first.</p>
     {% else %}
+      <p><a href="/quick">← Back</a></p>
       <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
       <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
       <div class="grid">
