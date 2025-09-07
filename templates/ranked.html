@@ -1,12 +1,172 @@
 {% extends 'base.html' %}
 {% block content %}
-  <h2>Ranked (WIP)</h2>
-  <p>{{ note }}</p>
-  <ul>
-    {% for p in puzzles %}
-      <li>Puzzle {{ p.id }}</li>
-    {% else %}
-      <li>No ranked set selected yet.</li>
-    {% endfor %}
-  </ul>
+  <h2>Ranked</h2>
+
+  {% if require_login %}
+    <p>You must sign in to play. Use the "Sign in with Google" button in the top-right.</p>
+  {% else %}
+    <p><strong>Your Ranked ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
+    {% if not puzzle %}
+      <form method="get" action="/ranked">
+        <input type="hidden" name="go" value="1" />
+        <button type="submit">Find Match</button>
+      </form>
+
+      <div style="margin-top:12px; padding:8px; background:#f7f7f7; border:1px solid #ddd; border-radius:4px; max-width:520px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong>Players:</strong> <span id="players-count">{{ players_count }}</span>
+          </div>
+          <div>
+            <button id="invite-add-btn" title="Invite by user ID code" style="padding:4px 8px;">+ Invite</button>
+          </div>
+        </div>
+        <div id="party-list" style="margin-top:8px;">
+          {% if party and party|length > 0 %}
+            <ul style="margin:0; padding-left:18px;">
+              <li><em>You</em></li>
+              {% for m in party %}
+                <li>{{ m.display_name }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </div>
+        <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
+      </div>
+
+      {% if active_sessions and active_sessions|length > 0 %}
+        <h3 style="margin-top:18px;">Resume your ranked puzzle</h3>
+        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse; min-width: 520px;">
+          <thead>
+            <tr>
+              <th align="left">Puzzle ID</th>
+              <th align="left">Players</th>
+              <th align="left">Others</th>
+              <th align="left">Expected Turns</th>
+              <th align="left">Started</th>
+              <th align="left">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in active_sessions %}
+              <tr>
+                <td>{{ s.puzzle_id }}</td>
+                <td>{{ s.players_count }}</td>
+                <td>{% if s.others and s.others|length > 0 %}{{ s.others|join(', ') }}{% else %}-{% endif %}</td>
+                <td>{{ s.expected_turns }}</td>
+                <td>{{ s.started_at }}</td>
+                <td><a href="/ranked?session_id={{ s.session_id }}">Resume</a></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    {% endif %}
+
+    {% if requested and puzzle %}
+      <p><a href="/ranked">← Back</a></p>
+      <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
+      <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
+      <div class="grid">
+        {% set rows = layout.rows %}
+        {% set row_res = layout.row_reserves %}
+        {% set col_res = layout.col_reserves %}
+        {% set opp = layout.opponent_row_index %}
+
+        <div class="row">
+          <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+          <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+          {% for c in range(5) %}
+            <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="row">
+          <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+          <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+          {% for c in range(5) %}
+            <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
+          {% endfor %}
+        </div>
+
+        {% for r in range(rows|length) %}
+          <div class="row">
+            <div class="cell reserve" title="Row reserve bottom">{{ row_res[r][1] }}</div>
+            <div class="cell reserve" title="Row reserve top">{{ row_res[r][0] }}</div>
+            {% for c in range(5) %}
+              <div class="cell {% if r==opp %}opponent{% endif %}">{{ rows[r][c] }}</div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+
+      <form method="post" action="/report">
+        <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
+        {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}" />{% endif %}
+        <label>
+          <input type="checkbox" name="solved" value="1" /> Solved
+        </label>
+        <button type="submit">Submit</button>
+      </form>
+    {% elif requested and not puzzle %}
+      <p>No ranked puzzle found. Try again later.</p>
+      {% if note %}<p>{{ note }}</p>{% endif %}
+    {% endif %}
+  {% endif %}
+
+  <script type="module">
+    // Invite helpers reused from quick
+    window.refreshParty = async function refreshParty() {
+      try {
+        const r = await fetch('/api/party');
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!j || !j.ok) return;
+        const party = j.party || [];
+        const playersCountEl = document.getElementById('players-count');
+        const list = document.getElementById('party-list');
+        if (playersCountEl) playersCountEl.textContent = String(j.players_count || (1 + party.length));
+        if (list) {
+          if (party.length === 0) {
+          } else {
+            const ul = document.createElement('ul');
+            ul.style.margin = '0';
+            ul.style.paddingLeft = '18px';
+            const liYou = document.createElement('li');
+            liYou.innerHTML = '<em>You</em>';
+            ul.appendChild(liYou);
+            party.forEach((m) => {
+              const li = document.createElement('li');
+              li.textContent = m.display_name;
+              ul.appendChild(li);
+            });
+            list.innerHTML = '';
+            list.appendChild(ul);
+          }
+        }
+      } catch (_) {}
+    };
+
+    const inviteAddBtn = document.getElementById('invite-add-btn');
+    const inviteMsg = document.getElementById('invite-msg');
+    if (inviteAddBtn) {
+      inviteAddBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const code = prompt('Invite player by user ID code (e.g., ABC234):');
+        if (!code) return;
+        try {
+          const r = await fetch('/api/invites/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_code: code }) });
+          const j = await r.json().catch(() => null);
+          if (j && j.ok) {
+            if (inviteMsg) inviteMsg.textContent = 'Invite sent. Expires in 5 minutes.';
+          } else {
+            const err = j && j.error ? j.error : 'failed';
+            if (inviteMsg) inviteMsg.textContent = 'Invite ' + err + '.';
+          }
+        } catch (_) {
+          if (inviteMsg) inviteMsg.textContent = 'Network error sending invite.';
+        }
+      });
+    }
+  </script>
 {% endblock %}

@@ -36,8 +36,12 @@ from app.db import (
     update_session_result,
     get_user_by_code,
     get_user_code,
+    get_user_ranked_results_with_puzzle_meta,
+    get_user_ranked_history_puzzle_ids,
+    get_single_active_ranked_session_for_user,
+    get_random_puzzle_for_level_and_players_excluding,
 )
-from app.elo import EloConfig, compute_user_elo
+from app.elo import EloConfig, compute_user_elo, RankedDifficultyConfig, select_ranked_level
 
 import firebase_admin
 from firebase_admin import auth as fb_auth, credentials
@@ -422,9 +426,156 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/ranked")
     def ranked():
-        # WIP placeholder - ranked puzzle selection to be implemented once enough data exists
-        note = "Ranked mode is a WIP. Placeholder selection shown below."
-        return render_template("ranked.html", note=note, puzzles=[])
+        # Require sign-in
+        if not session.get("user"):
+            return render_template(
+                "ranked.html",
+                puzzle=None,
+                requested=False,
+                require_login=True,
+                party=[],
+                elo=None,
+            )
+        current_user = session.get("user")
+        inviter_id = current_user.get("id") if current_user else None
+        # Current party
+        party_rows = get_party_for_inviter(conn, inviter_id) if inviter_id else []
+        party = [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
+        requested = request.args.get("go") == "1"
+        session_q = request.args.get("session_id")
+        # Players count (inviter + invitees)
+        players_filter = max(1, min(5, 1 + len(party)))
+
+        # Ranked-only ELO
+        ranked_rows = get_user_ranked_results_with_puzzle_meta(conn, inviter_id)
+        elo_cfg = EloConfig()
+        elo_value = compute_user_elo(ranked_rows, elo_cfg)
+
+        # Resuming a specific session
+        if session_q:
+            try:
+                resume_session_id = int(session_q)
+            except Exception:
+                return redirect(url_for("ranked"))
+            sess = get_session_by_id(conn, resume_session_id)
+            if not sess:
+                return redirect(url_for("ranked"))
+            sess_id, sess_puzzle_id, sess_expected_turns, sess_inviter_id, sess_status, sess_completed_at, sess_started_at = sess
+            if sess_status != 'active':
+                return redirect(url_for("ranked"))
+            # Verify membership
+            member_rows = get_session_members_with_names(conn, sess_id)
+            member_ids = [m[0] for m in member_rows]
+            if inviter_id not in ([sess_inviter_id] + member_ids):
+                return redirect(url_for("ranked"))
+            sp = get_puzzle_by_id(conn, sess_puzzle_id)
+            if not sp:
+                return redirect(url_for("ranked"))
+            layout = json.loads(sp.start_layout_json)
+            count, solved = get_puzzle_stats(conn, sp.id)
+            solve_pct = (solved / count * 100.0) if count else None
+            players_count_from_session = max(1, min(5, len(member_rows)))
+            return render_template(
+                "ranked.html",
+                puzzle=sp,
+                layout=layout,
+                expected_turns=sp.num_actions,
+                solve_pct=solve_pct,
+                requested=True,
+                require_login=False,
+                party=[{"user_id": uid, "display_name": name} for (uid, name) in member_rows if uid != inviter_id],
+                players_count=players_count_from_session,
+                session_id=sess_id,
+                elo=elo_value,
+            )
+
+        # If not requested, show setup and single resumable ranked session if present
+        if not requested:
+            active_row = get_single_active_ranked_session_for_user(conn, inviter_id) if inviter_id else None
+            active = []
+            if active_row:
+                sid, pid, exp_turns, started_at = active_row
+                members = get_session_members_with_names(conn, sid)
+                players_cnt = max(1, min(5, len(members)))
+                other_names = [name for (uid, name) in members if uid != inviter_id]
+                active.append({
+                    "session_id": sid,
+                    "puzzle_id": pid,
+                    "players_count": players_cnt,
+                    "others": other_names,
+                    "expected_turns": exp_turns,
+                    "started_at": started_at,
+                })
+            return render_template(
+                "ranked.html",
+                puzzle=None,
+                requested=False,
+                require_login=False,
+                party=party,
+                players_count=players_filter,
+                active_sessions=active,
+                elo=elo_value,
+            )
+
+        # Enforce single active ranked session per user
+        existing = get_single_active_ranked_session_for_user(conn, inviter_id) if inviter_id else None
+        if existing:
+            sid, pid, exp_turns, _started_at = existing
+            return redirect(url_for("ranked", session_id=sid))
+
+        # Select difficulty for ranked
+        diff_cfg = RankedDifficultyConfig()
+        level_choice = select_ranked_level(ranked_rows, elo_value, diff_cfg)
+        exclude_ids = get_user_ranked_history_puzzle_ids(conn, inviter_id)
+        puzzle = get_random_puzzle_for_level_and_players_excluding(conn, level_choice, players_filter, exclude_ids)
+        if not puzzle:
+            # Try nearby levels
+            tried = set([level_choice])
+            for delta in [1, -1, 2, -2, 3, -3]:
+                cand = max(diff_cfg.min_level, min(diff_cfg.max_level, level_choice + delta))
+                if cand in tried:
+                    continue
+                tried.add(cand)
+                puzzle = get_random_puzzle_for_level_and_players_excluding(conn, cand, players_filter, exclude_ids)
+                if puzzle:
+                    break
+        if not puzzle:
+            return render_template(
+                "ranked.html",
+                puzzle=None,
+                requested=True,
+                require_login=False,
+                party=party,
+                players_count=players_filter,
+                active_sessions=[],
+                elo=elo_value,
+                note="No suitable ranked puzzle found. Please generate more puzzles.",
+            )
+        layout = json.loads(puzzle.start_layout_json)
+        count, solved = get_puzzle_stats(conn, puzzle.id)
+        solve_pct = (solved / count * 100.0) if count else None
+        member_ids = [m[0] for m in party_rows]
+        session_id = create_game_session(
+            conn,
+            inviter_id=inviter_id or 0,
+            puzzle_id=puzzle.id,
+            expected_turns=puzzle.num_actions,
+            member_user_ids=member_ids,
+            mode='ranked',
+        )
+        return render_template(
+            "ranked.html",
+            puzzle=puzzle,
+            layout=layout,
+            expected_turns=puzzle.num_actions,
+            solve_pct=solve_pct,
+            requested=True,
+            require_login=False,
+            party=party,
+            players_count=players_filter,
+            session_id=session_id,
+            elo=elo_value,
+        )
 
     @app.route("/stats")
     def stats():
@@ -448,8 +599,12 @@ def create_app(db_path: str) -> Flask:
         solved_count_row = cur.fetchone()
         solved_count = solved_count_row[0] if solved_count_row and solved_count_row[0] else 0
         win_pct = (solved_count / started_count * 100.0) if started_count else None
-        # Placeholder could compute current user's ELO if logged in
-        elo_placeholder = "ELO: WIP"
+        # Compute current user's ranked-only ELO if logged in
+        elo_placeholder = "ELO: -"
+        current = session.get("user")
+        if current:
+            ranked_rows = get_user_ranked_results_with_puzzle_meta(conn, current.get("id"))
+            elo_placeholder = f"Ranked ELO: {compute_user_elo(ranked_rows, EloConfig()):.0f}"
         return render_template(
             "stats.html",
             results=rows,
@@ -475,7 +630,7 @@ def create_app(db_path: str) -> Flask:
         users = get_all_users(conn)
         per_user = []
         for uid, display_name in users:
-            rows = get_user_results_with_puzzle_meta(conn, uid)
+            rows = get_user_ranked_results_with_puzzle_meta(conn, uid)
             elo_value = compute_user_elo(rows, cfg)
             # Compute attempts and wins including sessions; compute win_rate to match stats definition
             attempts_all, wins_all = get_user_attempts_wins_including_sessions(conn, uid)
@@ -499,7 +654,7 @@ def create_app(db_path: str) -> Flask:
             SELECT gr.created_at, gr.solved, p.level, gr.seconds
             FROM game_results gr
             JOIN puzzles p ON p.id = gr.puzzle_id
-            WHERE gr.user_id IS NULL
+            WHERE gr.user_id IS NULL AND gr.ranked = 1
             ORDER BY gr.created_at ASC, gr.id ASC
             """
         )
@@ -508,7 +663,7 @@ def create_app(db_path: str) -> Flask:
             anon_elo = compute_user_elo(anon_rows, cfg)
             cur.execute(
                 """
-                SELECT COUNT(*), SUM(solved) FROM game_results WHERE user_id IS NULL
+                SELECT COUNT(*), SUM(solved) FROM game_results WHERE user_id IS NULL AND ranked = 1
                 """
             )
             row = cur.fetchone()
@@ -520,7 +675,7 @@ def create_app(db_path: str) -> Flask:
                 SELECT AVG(p.level)
                 FROM game_results gr
                 JOIN puzzles p ON p.id = gr.puzzle_id
-                WHERE gr.user_id IS NULL
+                WHERE gr.user_id IS NULL AND gr.ranked = 1
                 """
             )
             r2 = cur.fetchone()
@@ -530,7 +685,7 @@ def create_app(db_path: str) -> Flask:
                 SELECT AVG(p.level)
                 FROM game_results gr
                 JOIN puzzles p ON p.id = gr.puzzle_id
-                WHERE gr.user_id IS NULL AND gr.created_at >= datetime('now', ?)
+                WHERE gr.user_id IS NULL AND gr.ranked = 1 AND gr.created_at >= datetime('now', ?)
                 """,
                 (f'-{int(cfg.recency_halflife_days)} days',)
             )
