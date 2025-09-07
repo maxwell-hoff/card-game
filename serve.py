@@ -34,6 +34,8 @@ from app.db import (
     get_session_by_id,
     complete_session,
     update_session_result,
+    get_user_by_code,
+    get_user_code,
 )
 from app.elo import EloConfig, compute_user_elo
 
@@ -313,14 +315,14 @@ def create_app(db_path: str) -> Flask:
         if not current:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         data = request.get_json(silent=True) or {}
-        display_name = (data.get("display_name") or "").strip()
-        if not display_name:
-            return jsonify({"ok": False, "error": "missing_display_name"}), 400
-        # Look up invitee
-        target = get_user_by_display_name(conn, display_name)
+        user_code = (data.get("user_code") or "").strip().upper()
+        if not user_code:
+            return jsonify({"ok": False, "error": "missing_user_code"}), 400
+        # Look up invitee by code
+        target = get_user_by_code(conn, user_code)
         if not target:
             return jsonify({"ok": False, "error": "user_not_found"}), 404
-        invitee_id, _ = target
+        invitee_id, _display, _code = target
         inviter_id = current.get("id")
         if invitee_id == inviter_id:
             return jsonify({"ok": False, "error": "cannot_invite_self"}), 400
@@ -403,7 +405,9 @@ def create_app(db_path: str) -> Flask:
         name_from_token = decoded.get("name")
         display_name = requested_display_name or name_from_token or "Player"
         user_id = ensure_user(conn, user_key=uid, display_name=display_name)
-        session["user"] = {"id": user_id, "display_name": display_name}
+        # Fetch user_code for session display
+        user_code = get_user_code(conn, user_id)
+        session["user"] = {"id": user_id, "display_name": display_name, "user_code": user_code}
         print("[AUTH] /api/login success; session user set", session["user"]) 
         return jsonify({"ok": True, "user": session["user"]})
 

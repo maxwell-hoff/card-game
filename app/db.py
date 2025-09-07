@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+import secrets
 from typing import List, Optional, Tuple
 from datetime import datetime
 
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_key TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
+    user_code TEXT UNIQUE, -- short public code for inviting
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -166,6 +168,24 @@ def ensure_migrations(conn: sqlite3.Connection) -> None:
     if "session_id" not in cols_gr:
         cur.execute("ALTER TABLE game_results ADD COLUMN session_id INTEGER")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_game_results_session_id ON game_results(session_id)")
+    # Add user_code column to users if missing and backfill with unique codes
+    cur.execute("PRAGMA table_info(users)")
+    cols_users = [r[1] for r in cur.fetchall()]
+    if "user_code" not in cols_users:
+        cur.execute("ALTER TABLE users ADD COLUMN user_code TEXT")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_code ON users(user_code)")
+        conn.commit()
+        # Backfill existing users with codes
+        cur.execute("SELECT id FROM users WHERE user_code IS NULL")
+        to_fill = [int(r[0]) for r in cur.fetchall()]
+        for uid in to_fill:
+            code = generate_unique_user_code(conn)
+            cur.execute("UPDATE users SET user_code = ? WHERE id = ?", (code, uid))
+        conn.commit()
+    else:
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_code ON users(user_code)")
+        conn.commit()
+
     conn.commit()
 
 
@@ -325,12 +345,45 @@ def ensure_user(conn: sqlite3.Connection, user_key: str, display_name: str) -> i
             )
             conn.commit()
         return user_id
+    # Generate a short unique user_code on first create
+    code = generate_unique_user_code(conn)
     cur.execute(
-        "INSERT INTO users (user_key, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        (user_key, display_name or "Player", now, now),
+        "INSERT INTO users (user_key, display_name, user_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (user_key, display_name or "Player", code, now, now),
     )
     conn.commit()
     return cur.lastrowid
+
+
+def generate_unique_user_code(conn: sqlite3.Connection, length: int = 6) -> str:
+    """Generate a short, human-friendly, unique code for a user.
+
+    Uses an alphabet without ambiguous characters and ensures uniqueness in DB.
+    """
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no I, O, 1, 0
+    cur = conn.cursor()
+    while True:
+        code = "".join(secrets.choice(alphabet) for _ in range(length))
+        cur.execute("SELECT 1 FROM users WHERE user_code = ?", (code,))
+        if not cur.fetchone():
+            return code
+
+
+def get_user_by_code(conn: sqlite3.Connection, user_code: str) -> Optional[Tuple[int, str, str]]:
+    """Return (id, display_name, user_code) for a user by code, or None."""
+    cur = conn.cursor()
+    cur.execute("SELECT id, display_name, user_code FROM users WHERE user_code = ?", (user_code.strip().upper(),))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return int(row[0]), str(row[1]), str(row[2])
+
+
+def get_user_code(conn: sqlite3.Connection, user_id: int) -> Optional[str]:
+    cur = conn.cursor()
+    cur.execute("SELECT user_code FROM users WHERE id = ?", (user_id,))
+    row = cur.fetchone()
+    return str(row[0]) if row and row[0] else None
 
 
 def get_all_users(conn: sqlite3.Connection) -> List[Tuple[int, str]]:
