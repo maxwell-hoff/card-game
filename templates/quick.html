@@ -6,18 +6,35 @@
     <p>You must sign in to play. Use the "Sign in with Google" button in the top-right.</p>
   {% else %}
     <form method="get" action="/quick">
-      <label for="players">Players:</label>
-      <select id="players" name="players">
-        <option value="" {% if not players_filter %}selected{% endif %}>Any</option>
-        {% for p in [1,2,3,4,5] %}
-          <option value="{{ p }}" {% if players_filter==p %}selected{% endif %}>{{ p }}</option>
-        {% endfor %}
-      </select>
       <label for="turns">Turns:</label>
       <input id="turns" name="turns" type="number" min="1" value="{{ turns_filter if turns_filter is not none else '' }}" placeholder="Random" />
       <input type="hidden" name="go" value="1" />
       <button type="submit">Go</button>
     </form>
+
+    <div style="margin-top:12px; padding:8px; background:#f7f7f7; border:1px solid #ddd; border-radius:4px; max-width:520px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <strong>Players:</strong> <span id="players-count">{{ players_count }}</span>
+        </div>
+        <div>
+          <button id="invite-add-btn" title="Invite by display name" style="padding:4px 8px;">+ Invite</button>
+        </div>
+      </div>
+      <div id="party-list" style="margin-top:8px;">
+        {% if party and party|length > 0 %}
+          <ul style="margin:0; padding-left:18px;">
+            <li><em>You</em></li>
+            {% for m in party %}
+              <li>{{ m.display_name }}</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p>
+        {% endif %}
+      </div>
+      <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
+    </div>
 
     {% if not requested %}
       <p>Choose filters and hit Go to get a puzzle.</p>
@@ -64,7 +81,6 @@
 
       <form method="post" action="/report">
         <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
-        {% if players_filter %}<input type="hidden" name="players_filter" value="{{ players_filter }}" />{% endif %}
         {% if turns_filter %}<input type="hidden" name="turns_filter" value="{{ turns_filter }}" />{% endif %}
         <label>
           <input type="checkbox" name="solved" value="1" /> Solved
@@ -73,4 +89,60 @@
       </form>
     {% endif %}
   {% endif %}
+  <script type="module">
+    // Define a global to refresh party after accepting invite from header
+    window.refreshParty = async function refreshParty() {
+      try {
+        const r = await fetch('/api/party');
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!j || !j.ok) return;
+        const party = j.party || [];
+        const playersCountEl = document.getElementById('players-count');
+        const list = document.getElementById('party-list');
+        if (playersCountEl) playersCountEl.textContent = String(j.players_count || (1 + party.length));
+        if (list) {
+          if (party.length === 0) {
+            list.innerHTML = '<p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p>';
+          } else {
+            const ul = document.createElement('ul');
+            ul.style.margin = '0';
+            ul.style.paddingLeft = '18px';
+            const liYou = document.createElement('li');
+            liYou.innerHTML = '<em>You</em>';
+            ul.appendChild(liYou);
+            party.forEach((m) => {
+              const li = document.createElement('li');
+              li.textContent = m.display_name;
+              ul.appendChild(li);
+            });
+            list.innerHTML = '';
+            list.appendChild(ul);
+          }
+        }
+      } catch (_) {}
+    };
+
+    const inviteAddBtn = document.getElementById('invite-add-btn');
+    const inviteMsg = document.getElementById('invite-msg');
+    if (inviteAddBtn) {
+      inviteAddBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const name = prompt('Invite player by display name:');
+        if (!name) return;
+        try {
+          const r = await fetch('/api/invites/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ display_name: name }) });
+          const j = await r.json().catch(() => null);
+          if (j && j.ok) {
+            if (inviteMsg) inviteMsg.textContent = 'Invite sent. Expires in 5 minutes.';
+          } else {
+            const err = j && j.error ? j.error : 'failed';
+            if (inviteMsg) inviteMsg.textContent = 'Invite ' + err + '.';
+          }
+        } catch (_) {
+          if (inviteMsg) inviteMsg.textContent = 'Network error sending invite.';
+        }
+      });
+    }
+  </script>
 {% endblock %}

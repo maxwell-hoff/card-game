@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 from typing import Optional
+import secrets
+from datetime import datetime, timedelta
 import os
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
@@ -20,6 +22,11 @@ from app.db import (
     get_all_users,
     get_user_results_with_puzzle_meta,
     get_user_basic_stats,
+    get_user_by_display_name,
+    create_invite,
+    get_pending_invites_for_user,
+    accept_invite,
+    get_party_for_inviter,
 )
 from app.elo import EloConfig, compute_user_elo
 
@@ -117,36 +124,42 @@ def create_app(db_path: str) -> Flask:
             return render_template(
                 "quick.html",
                 puzzle=None,
-                players_filter=None,
                 turns_filter=None,
                 requested=False,
                 require_login=True,
+                party=[],
             )
-        players_q = request.args.get("players")
+        current_user = session.get("user")
+        inviter_id = current_user.get("id") if current_user else None
+        # Current party for inviter: list of (user_id, display_name)
+        party_rows = get_party_for_inviter(conn, inviter_id) if inviter_id else []
+        party = [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         turns_q = request.args.get("turns")
         requested = request.args.get("go") == "1"
-        try:
-            players_filter = int(players_q) if players_q else None
-        except ValueError:
-            players_filter = None
         try:
             turns_filter = int(turns_q) if turns_q else None
         except ValueError:
             turns_filter = None
-        if players_filter and (players_filter < 1 or players_filter > 5):
-            players_filter = None
         if turns_filter is not None and turns_filter < 1:
             turns_filter = None
+
+        # Determine players count from party (inviter + accepted invitees), min 1, max 5
+        players_filter = 1 + len(party)
+        if players_filter < 1:
+            players_filter = 1
+        if players_filter > 5:
+            players_filter = 5
 
         # If user hasn't clicked Go yet, do not fetch or render a puzzle
         if not requested:
             return render_template(
                 "quick.html",
                 puzzle=None,
-                players_filter=players_filter,
                 turns_filter=turns_filter,
                 requested=False,
                 require_login=False,
+                party=party,
+                players_count=players_filter,
             )
 
         puzzle = get_random_puzzle_for_filters(conn, players_filter, turns_filter)
@@ -154,10 +167,11 @@ def create_app(db_path: str) -> Flask:
             return render_template(
                 "quick.html",
                 puzzle=None,
-                players_filter=players_filter,
                 turns_filter=turns_filter,
                 requested=True,
                 require_login=False,
+                party=party,
+                players_count=players_filter,
             )
         layout = json.loads(puzzle.start_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
@@ -168,10 +182,11 @@ def create_app(db_path: str) -> Flask:
             layout=layout,
             expected_turns=puzzle.num_actions,
             solve_pct=solve_pct,
-            players_filter=players_filter,
             turns_filter=turns_filter,
             requested=True,
             require_login=False,
+            party=party,
+            players_count=players_filter,
         )
 
     @app.route("/puzzle/<int:puzzle_id>")
@@ -198,11 +213,76 @@ def create_app(db_path: str) -> Flask:
         user_id = (session.get("user") or {}).get("id")
         add_game_result(conn, puzzle_id, solved_flag, seconds_val, user_id=user_id)
         kwargs = {}
-        if players_filter:
-            kwargs["players"] = players_filter
         if turns_filter:
             kwargs["turns"] = turns_filter
         return redirect(url_for("quick", **kwargs))
+
+    # --- Invites API ---
+    @app.route("/api/invites/create", methods=["POST"])
+    def api_invites_create():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        display_name = (data.get("display_name") or "").strip()
+        if not display_name:
+            return jsonify({"ok": False, "error": "missing_display_name"}), 400
+        # Look up invitee
+        target = get_user_by_display_name(conn, display_name)
+        if not target:
+            return jsonify({"ok": False, "error": "user_not_found"}), 404
+        invitee_id, _ = target
+        inviter_id = current.get("id")
+        if invitee_id == inviter_id:
+            return jsonify({"ok": False, "error": "cannot_invite_self"}), 400
+        token = secrets.token_urlsafe(16)
+        expires_at = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
+        invite_id = create_invite(conn, inviter_id=inviter_id, invitee_id=invitee_id, token=token, expires_at_iso=expires_at)
+        return jsonify({"ok": True, "invite_id": invite_id, "expires_at": expires_at})
+
+    @app.route("/api/invites/pending", methods=["GET"])
+    def api_invites_pending():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        user_id = current.get("id")
+        rows = get_pending_invites_for_user(conn, user_id)
+        # rows: (id, inviter_id, inviter_display, created_at, expires_at)
+        invites = [
+            {
+                "id": r[0],
+                "inviter_id": r[1],
+                "inviter_display": r[2],
+                "created_at": r[3],
+                "expires_at": r[4],
+            }
+            for r in rows
+        ]
+        return jsonify({"ok": True, "invites": invites})
+
+    @app.route("/api/invites/accept", methods=["POST"])
+    def api_invites_accept():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        invite_id = data.get("invite_id")
+        try:
+            invite_id = int(invite_id)
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_invite_id"}), 400
+        ok = accept_invite(conn, invite_id, current.get("id"))
+        return jsonify({"ok": bool(ok)})
+
+    @app.route("/api/party", methods=["GET"])
+    def api_party():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        inviter_id = current.get("id")
+        rows = get_party_for_inviter(conn, inviter_id)
+        party = [{"user_id": r[0], "display_name": r[1]} for r in rows]
+        return jsonify({"ok": True, "party": party, "players_count": 1 + len(party)})
 
     @app.route("/api/login", methods=["POST"])
     def api_login():

@@ -45,6 +45,20 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE INDEX IF NOT EXISTS idx_game_results_user_id ON game_results(user_id);
 CREATE INDEX IF NOT EXISTS idx_game_results_created_at ON game_results(created_at);
+
+CREATE TABLE IF NOT EXISTS invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inviter_id INTEGER NOT NULL,
+    invitee_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | expired | cancelled
+    token TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY(inviter_id) REFERENCES users(id),
+    FOREIGN KEY(invitee_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_invites_invitee_status ON invites(invitee_id, status);
+CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at);
 """
 
 
@@ -77,6 +91,24 @@ def ensure_migrations(conn: sqlite3.Connection) -> None:
     # Create indexes (IF NOT EXISTS is safe even if they already exist)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_game_results_user_id ON game_results(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_game_results_created_at ON game_results(created_at)")
+    # Ensure invites table and indexes exist
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS invites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inviter_id INTEGER NOT NULL,
+            invitee_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            token TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            FOREIGN KEY(inviter_id) REFERENCES users(id),
+            FOREIGN KEY(invitee_id) REFERENCES users(id)
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_invitee_status ON invites(invitee_id, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
     conn.commit()
 
 
@@ -249,6 +281,98 @@ def get_all_users(conn: sqlite3.Connection) -> List[Tuple[int, str]]:
     cur.execute("SELECT id, display_name FROM users ORDER BY id ASC")
     rows = cur.fetchall()
     return [(r[0], r[1]) for r in rows]
+
+
+def get_user_by_display_name(conn: sqlite3.Connection, display_name: str) -> Optional[Tuple[int, str]]:
+    cur = conn.cursor()
+    cur.execute("SELECT id, display_name FROM users WHERE display_name = ?", (display_name,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return int(row[0]), row[1]
+
+
+def create_invite(
+    conn: sqlite3.Connection,
+    inviter_id: int,
+    invitee_id: int,
+    token: str,
+    expires_at_iso: str,
+) -> int:
+    now = datetime.utcnow().isoformat()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO invites (inviter_id, invitee_id, status, token, created_at, expires_at)
+        VALUES (?, ?, 'pending', ?, ?, ?)
+        """,
+        (inviter_id, invitee_id, token, now, expires_at_iso),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def expire_old_invites(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE invites SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?",
+        (datetime.utcnow().isoformat(),),
+    )
+    conn.commit()
+
+
+def get_pending_invites_for_user(conn: sqlite3.Connection, invitee_id: int) -> List[Tuple[int, int, str, str, str]]:
+    """Return list of (id, inviter_id, inviter_display, created_at, expires_at) for pending, non-expired invites."""
+    expire_old_invites(conn)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT i.id, u.id AS inviter_id, u.display_name, i.created_at, i.expires_at
+        FROM invites i
+        JOIN users u ON u.id = i.inviter_id
+        WHERE i.invitee_id = ? AND i.status = 'pending' AND i.expires_at > ?
+        ORDER BY i.created_at DESC, i.id DESC
+        """,
+        (invitee_id, datetime.utcnow().isoformat()),
+    )
+    return cur.fetchall()
+
+
+def accept_invite(conn: sqlite3.Connection, invite_id: int, invitee_id: int) -> bool:
+    expire_old_invites(conn)
+    cur = conn.cursor()
+    # Ensure it belongs to the invitee and is pending
+    cur.execute(
+        "SELECT status, expires_at FROM invites WHERE id = ? AND invitee_id = ?",
+        (invite_id, invitee_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    status, expires_at = row
+    if status != 'pending' or expires_at <= datetime.utcnow().isoformat():
+        return False
+    cur.execute("UPDATE invites SET status = 'accepted' WHERE id = ?", (invite_id,))
+    conn.commit()
+    return True
+
+
+def get_party_for_inviter(conn: sqlite3.Connection, inviter_id: int) -> List[Tuple[int, str]]:
+    """Return accepted invitees (user_id, display_name) for inviter where invite not expired yet."""
+    expire_old_invites(conn)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT u.id, u.display_name
+        FROM invites i
+        JOIN users u ON u.id = i.invitee_id
+        WHERE i.inviter_id = ? AND i.status = 'accepted' AND i.expires_at > ?
+        ORDER BY i.created_at ASC, i.id ASC
+        """,
+        (inviter_id, datetime.utcnow().isoformat()),
+    )
+    rows = cur.fetchall()
+    return [(int(r[0]), str(r[1])) for r in rows]
 
 
 def get_user_results_with_puzzle_meta(
