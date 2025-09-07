@@ -7,10 +7,14 @@
   {% else %}
     <p><strong>Your Ranked ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
     {% if not puzzle %}
+      {% set has_active = active_sessions and active_sessions|length > 0 %}
       <form method="get" action="/ranked">
         <input type="hidden" name="go" value="1" />
-        <button type="submit">Find Match</button>
+        <button type="submit" {% if has_active %}disabled title="You have an active ranked puzzle. Complete or give up first." style="opacity:0.6; cursor:not-allowed;"{% endif %}>Find Match</button>
       </form>
+      {% if has_active %}
+        <div style="margin-top:6px; color:#666; font-size: 90%;">Complete your current ranked puzzle to find a new match.</div>
+      {% endif %}
 
       <div style="margin-top:12px; padding:8px; background:#f7f7f7; border:1px solid #ddd; border-radius:4px; max-width:520px;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
