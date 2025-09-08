@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h1 style="margin-top:0;">Cascade</h1>
+  <p style="max-width:760px;">Cascade is a cooperative strategy card puzzle designed to be played <strong>in person</strong> with a small group. Think of it as a modern successor to classic gathering games like bridge: you get the social connection and table talk, plus the modern perks of computers—automatic progress tracking, fair matchmaking, and a deep catalog of handcrafted and auto-balanced puzzles.</p>
+
+  <h2>Why play</h2>
+  <ul>
+    <li><strong>Bring people together</strong>: a simple shared board that sparks collaboration and quick strategy discussions.</li>
+    <li><strong>Modern appeal</strong>: computers curate the <em>right</em> challenge via puzzle generation and optimization—balanced difficulty and guaranteed solvability.</li>
+    <li><strong>Progress over time</strong>: track wins, streaks, and ranked ELO to see improvement as a group or individually.</li>
+  </ul>
+
+  <h2>How it works</h2>
+  <p style="max-width:760px;">Each puzzle lays out a 5-column grid with row and column reserves. Your goal is to transform the starting layout into the solved layout within the target number of turns. On your turn you can:</p>
+  <ul>
+    <li><strong>Move a row</strong> one step left or right.</li>
+    <li><strong>Move a column</strong> one step up or down.</li>
+    <li><strong>Swap two cards</strong> within a row.</li>
+  </ul>
+  <p>Work together to sequence these moves efficiently. Communication is encouraged!</p>
+
+  <h2>Play styles</h2>
+  <ul>
+    <li><strong>Together, in person</strong> (recommended): sit around a table, sign in, and play as a group. Invite teammates using their Player ID from the header.</li>
+    <li><strong>Solo practice</strong>: you can play alone to learn mechanics and improve. The game is meant for groups but supports solo play to get the hang of it.</li>
+  </ul>
+
+  <h2>Site navigation</h2>
+  <ul>
+    <li><strong>Quick Play</strong>: jump into a balanced puzzle. Set optional turn filters. Invite friends to play the same board.</li>
+    <li><strong>Ranked</strong>: play rated puzzles that update your ELO based on performance.</li>
+    <li><strong>Stats</strong>: view recent attempts and win rate.</li>
+    <li><strong>Leaderboard</strong>: see top players by ELO and your standing.</li>
+  </ul>
+
+  <h2>Get started</h2>
+  {% if not session_user %}
+    <p><strong>You must sign in to play.</strong> Use the “Sign in with Google” button in the top-right, then you’ll be sent directly to Quick Play.</p>
+  {% else %}
+    <p>You’re signed in as <strong>{{ session_user.display_name }}</strong>. Head to <a href="/quick">Quick Play</a> to start.</p>
+  {% endif %}
+{% endblock %}
+
+

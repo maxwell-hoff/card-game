@@ -129,7 +129,10 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/")
     def index():
-        return redirect(url_for("quick"))
+        # Show landing page for logged-out users; redirect signed-in users to Quick Play
+        if session.get("user"):
+            return redirect(url_for("quick"))
+        return render_template("landing.html")
 
     @app.route("/quick")
     def quick():
