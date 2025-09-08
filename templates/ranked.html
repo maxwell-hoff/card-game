@@ -28,12 +28,17 @@
         <div id="party-list" style="margin-top:8px;">
           {% if party and party|length > 0 %}
             <ul style="margin:0; padding-left:18px;">
-              <li><em>You</em></li>
+              <li><em>You</em> <span class="ready-pill" data-user="self"></span></li>
               {% for m in party %}
-                <li>{{ m.display_name }}</li>
+                <li>{{ m.display_name }} <span class="ready-pill" data-user="{{ m.user_id }}"></span></li>
               {% endfor %}
             </ul>
           {% endif %}
+        </div>
+        <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+          <button id="ready-toggle" style="padding:4px 8px;">Ready</button>
+          <button id="start-btn" style="padding:4px 8px; display:none;">Go</button>
+          <span id="lobby-status" style="color:#555;"></span>
         </div>
         <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
       </div>
@@ -141,7 +146,7 @@
     // Invite helpers reused from quick
     window.refreshParty = async function refreshParty() {
       try {
-        const r = await fetch('/api/party');
+        const r = await fetch('/api/party?mode=ranked');
         if (!r.ok) return;
         const j = await r.json();
         if (!j || !j.ok) return;
@@ -156,11 +161,11 @@
             ul.style.margin = '0';
             ul.style.paddingLeft = '18px';
             const liYou = document.createElement('li');
-            liYou.innerHTML = '<em>You</em>';
+            liYou.innerHTML = '<em>You</em> <span class="ready-pill" data-user="self"></span>';
             ul.appendChild(liYou);
             party.forEach((m) => {
               const li = document.createElement('li');
-              li.textContent = m.display_name;
+              li.innerHTML = m.display_name + ' <span class="ready-pill" data-user="' + String(m.user_id) + '"></span>';
               ul.appendChild(li);
             });
             list.innerHTML = '';
@@ -170,6 +175,75 @@
       } catch (_) {}
     };
 
+    // Lobby polling for readiness/state
+    (function initLobbyPolling() {
+      const readyBtn = document.getElementById('ready-toggle');
+      const startBtn = document.getElementById('start-btn');
+      const lobbyStatus = document.getElementById('lobby-status');
+      let isReady = false;
+      let pollTimer = null;
+
+      function renderReadyPills(party) {
+        const pills = document.querySelectorAll('.ready-pill');
+        pills.forEach((pill) => {
+          const attr = pill.getAttribute('data-user');
+          let uid = null;
+          if (attr === 'self') uid = 'self';
+          const matching = party.find(p => String(p.user_id) === String(uid) || (uid === 'self' && p.is_self));
+          const ready = matching ? !!matching.ready : false;
+          pill.textContent = ready ? '✓ ready' : 'not ready';
+          pill.style.fontSize = '90%';
+          pill.style.color = ready ? '#0a0' : '#a00';
+          pill.style.marginLeft = '6px';
+        });
+      }
+
+      async function fetchStatus() {
+        try {
+          const r = await fetch('/api/lobby/status?mode=ranked');
+          const j = await r.json().catch(() => null);
+          if (!j || !j.ok) return;
+          const party = Array.isArray(j.party) ? j.party : [];
+          const userDisplay = document.getElementById('user-display');
+          const myName = userDisplay ? (userDisplay.textContent || '').replace(/^Signed in as\s+/, '').split(' (Player ID')[0] : '';
+          party.forEach(p => { p.is_self = (p.display_name === myName); });
+          renderReadyPills(party);
+          if (lobbyStatus) lobbyStatus.textContent = j.can_start ? 'All ready.' : 'Waiting for players…';
+          if (startBtn) startBtn.style.display = j.can_start ? 'inline-block' : 'none';
+        } catch (_) {}
+        finally {
+          pollTimer = setTimeout(fetchStatus, 3000);
+        }
+      }
+
+      if (readyBtn) {
+        readyBtn.addEventListener('click', async () => {
+          isReady = !isReady;
+          readyBtn.textContent = isReady ? 'Unready' : 'Ready';
+          try {
+            await fetch('/api/lobby/ready', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked', ready: isReady }) });
+          } catch (_) {}
+          fetchStatus();
+        });
+      }
+      if (startBtn) {
+        startBtn.addEventListener('click', async () => {
+          try {
+            const r = await fetch('/api/lobby/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked' }) });
+            const j = await r.json().catch(() => null);
+            if (j && j.ok && j.redirect_url) {
+              location.href = j.redirect_url;
+            } else {
+              alert('Not all players are ready.');
+            }
+          } catch (_) {
+            alert('Failed to start.');
+          }
+        });
+      }
+      fetchStatus();
+    })();
+
     const inviteAddBtn = document.getElementById('invite-add-btn');
     const inviteMsg = document.getElementById('invite-msg');
     if (inviteAddBtn) {
@@ -178,7 +252,7 @@
         const code = prompt('Invite player by user ID code (e.g., ABC234):');
         if (!code) return;
         try {
-          const r = await fetch('/api/invites/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_code: code }) });
+          const r = await fetch('/api/invites/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_code: code, mode: 'ranked' }) });
           const j = await r.json().catch(() => null);
           if (j && j.ok) {
             if (inviteMsg) inviteMsg.textContent = 'Invite sent. Expires in 5 minutes.';

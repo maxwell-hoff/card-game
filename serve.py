@@ -41,6 +41,10 @@ from app.db import (
     get_user_ranked_history_puzzle_ids,
     get_single_active_ranked_session_for_user,
     get_random_puzzle_for_level_and_players_excluding,
+    get_latest_inviter_for_invitee_and_mode,
+    lobby_set_ready,
+    lobby_get_ready_map,
+    get_active_quick_sessions_for_user,
 )
 from app.elo import EloConfig, compute_user_elo, RankedDifficultyConfig, select_ranked_level
 
@@ -139,8 +143,14 @@ def create_app(db_path: str) -> Flask:
             return redirect(url_for("index"))
         current_user = session.get("user")
         inviter_id = current_user.get("id") if current_user else None
-        # Current party for inviter: list of (user_id, display_name)
-        party_rows = get_party_for_inviter(conn, inviter_id) if inviter_id else []
+        # Determine lobby host: if this user accepted an invite for quick, use inviter as host
+        host_id = inviter_id
+        if inviter_id:
+            latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, inviter_id, 'quick')
+            if latest_inviter:
+                host_id = latest_inviter
+        # Current party for host: list of (user_id, display_name)
+        party_rows = get_party_for_inviter(conn, host_id, mode='quick') if host_id else []
         party = [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         turns_q = request.args.get("turns")
         requested = request.args.get("go") == "1"
@@ -246,7 +256,7 @@ def create_app(db_path: str) -> Flask:
         member_ids = [m[0] for m in party_rows]
         session_id = create_game_session(
             conn,
-            inviter_id=inviter_id or 0,
+            inviter_id=host_id or 0,
             puzzle_id=puzzle.id,
             expected_turns=puzzle.num_actions,
             member_user_ids=member_ids,
@@ -366,6 +376,9 @@ def create_app(db_path: str) -> Flask:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         data = request.get_json(silent=True) or {}
         user_code = (data.get("user_code") or "").strip().upper()
+        mode = (data.get("mode") or "quick").strip().lower()
+        if mode not in ("quick", "ranked"):
+            mode = "quick"
         if not user_code:
             return jsonify({"ok": False, "error": "missing_user_code"}), 400
         # Look up invitee by code
@@ -378,8 +391,8 @@ def create_app(db_path: str) -> Flask:
             return jsonify({"ok": False, "error": "cannot_invite_self"}), 400
         token = secrets.token_urlsafe(16)
         expires_at = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
-        invite_id = create_invite(conn, inviter_id=inviter_id, invitee_id=invitee_id, token=token, expires_at_iso=expires_at)
-        return jsonify({"ok": True, "invite_id": invite_id, "expires_at": expires_at})
+        invite_id = create_invite(conn, inviter_id=inviter_id, invitee_id=invitee_id, mode=mode, token=token, expires_at_iso=expires_at)
+        return jsonify({"ok": True, "invite_id": invite_id, "expires_at": expires_at, "mode": mode})
 
     @app.route("/api/invites/pending", methods=["GET"])
     def api_invites_pending():
@@ -388,14 +401,15 @@ def create_app(db_path: str) -> Flask:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         user_id = current.get("id")
         rows = get_pending_invites_for_user(conn, user_id)
-        # rows: (id, inviter_id, inviter_display, created_at, expires_at)
+        # rows: (id, inviter_id, inviter_display, mode, created_at, expires_at)
         invites = [
             {
                 "id": r[0],
                 "inviter_id": r[1],
                 "inviter_display": r[2],
-                "created_at": r[3],
-                "expires_at": r[4],
+                "mode": r[3],
+                "created_at": r[4],
+                "expires_at": r[5],
             }
             for r in rows
         ]
@@ -412,8 +426,14 @@ def create_app(db_path: str) -> Flask:
             invite_id = int(invite_id)
         except Exception:
             return jsonify({"ok": False, "error": "invalid_invite_id"}), 400
+        # Look up inviter and mode for redirect hints
+        cur = conn.cursor()
+        cur.execute("SELECT inviter_id, mode FROM invites WHERE id = ?", (invite_id,))
+        inv_row = cur.fetchone()
+        inviter_id = int(inv_row[0]) if inv_row else None
+        mode = str(inv_row[1]) if inv_row and inv_row[1] else 'quick'
         ok = accept_invite(conn, invite_id, current.get("id"))
-        return jsonify({"ok": bool(ok)})
+        return jsonify({"ok": bool(ok), "mode": mode, "inviter_id": inviter_id})
 
     @app.route("/api/party", methods=["GET"])
     def api_party():
@@ -421,7 +441,10 @@ def create_app(db_path: str) -> Flask:
         if not current:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         inviter_id = current.get("id")
-        rows = get_party_for_inviter(conn, inviter_id)
+        mode = (request.args.get("mode") or "quick").strip().lower()
+        if mode not in ("quick", "ranked"):
+            mode = "quick"
+        rows = get_party_for_inviter(conn, inviter_id, mode=mode)
         party = [{"user_id": r[0], "display_name": r[1]} for r in rows]
         return jsonify({"ok": True, "party": party, "players_count": 1 + len(party)})
 
@@ -477,8 +500,14 @@ def create_app(db_path: str) -> Flask:
             return redirect(url_for("index"))
         current_user = session.get("user")
         inviter_id = current_user.get("id") if current_user else None
-        # Current party
-        party_rows = get_party_for_inviter(conn, inviter_id) if inviter_id else []
+        # Determine lobby host for ranked
+        host_id = inviter_id
+        if inviter_id:
+            latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, inviter_id, 'ranked')
+            if latest_inviter:
+                host_id = latest_inviter
+        # Current party for host
+        party_rows = get_party_for_inviter(conn, host_id, mode='ranked') if host_id else []
         party = [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         requested = request.args.get("go") == "1"
         session_q = request.args.get("session_id")
@@ -596,7 +625,7 @@ def create_app(db_path: str) -> Flask:
         member_ids = [m[0] for m in party_rows]
         session_id = create_game_session(
             conn,
-            inviter_id=inviter_id or 0,
+            inviter_id=host_id or 0,
             puzzle_id=puzzle.id,
             expected_turns=puzzle.num_actions,
             member_user_ids=member_ids,
@@ -818,6 +847,85 @@ def create_app(db_path: str) -> Flask:
             page_size=page_size,
             user_summary=user_summary,
         )
+
+    # --- Lobby API: status/ready/start ---
+    @app.route("/api/lobby/status", methods=["GET"])
+    def api_lobby_status():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        user_id = int(current.get("id"))
+        mode = (request.args.get("mode") or "quick").strip().lower()
+        if mode not in ("quick", "ranked"):
+            mode = "quick"
+        inviter_id = user_id
+        latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, user_id, mode)
+        if latest_inviter:
+            inviter_id = latest_inviter
+        # Build party list (inviter + accepted invitees)
+        cur = conn.cursor()
+        cur.execute("SELECT display_name FROM users WHERE id = ?", (inviter_id,))
+        row = cur.fetchone()
+        inviter_display = str(row[0]) if row else "Host"
+        party_rows = get_party_for_inviter(conn, inviter_id, mode=mode)
+        members = [(inviter_id, inviter_display)] + party_rows
+        ready_map = lobby_get_ready_map(conn, inviter_id, mode)
+        party = [{"user_id": uid, "display_name": name, "ready": bool(ready_map.get(uid, False))} for (uid, name) in members]
+        can_start = all(m.get("ready") for m in party) and len(party) >= 1
+        # Existing active session id
+        active_session_id = None
+        if mode == 'quick':
+            rows = get_active_quick_sessions_for_user(conn, inviter_id)
+            active_session_id = rows[0][0] if rows else None
+        else:
+            r = get_single_active_ranked_session_for_user(conn, inviter_id)
+            active_session_id = r[0] if r else None
+        return jsonify({"ok": True, "inviter_id": inviter_id, "mode": mode, "party": party, "players_count": len(party), "can_start": can_start, "active_session_id": active_session_id})
+
+    @app.route("/api/lobby/ready", methods=["POST"])
+    def api_lobby_ready():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        mode = (data.get("mode") or "quick").strip().lower()
+        if mode not in ("quick", "ranked"):
+            mode = "quick"
+        ready_flag = bool(data.get("ready", False))
+        user_id = int(current.get("id"))
+        inviter_id = user_id
+        latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, user_id, mode)
+        if latest_inviter:
+            inviter_id = latest_inviter
+        lobby_set_ready(conn, inviter_id, mode, user_id, ready_flag)
+        return jsonify({"ok": True})
+
+    @app.route("/api/lobby/start", methods=["POST"])
+    def api_lobby_start():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        mode = (data.get("mode") or "quick").strip().lower()
+        if mode not in ("quick", "ranked"):
+            mode = "quick"
+        user_id = int(current.get("id"))
+        inviter_id = user_id
+        latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, user_id, mode)
+        if latest_inviter:
+            inviter_id = latest_inviter
+        # Validate readiness
+        cur = conn.cursor()
+        cur.execute("SELECT display_name FROM users WHERE id = ?", (inviter_id,))
+        row = cur.fetchone()
+        inviter_display = str(row[0]) if row else "Host"
+        party_rows = get_party_for_inviter(conn, inviter_id, mode=mode)
+        members = [(inviter_id, inviter_display)] + party_rows
+        ready_map = lobby_get_ready_map(conn, inviter_id, mode)
+        if not members or not all(bool(ready_map.get(uid, False)) for (uid, _name) in members):
+            return jsonify({"ok": False, "error": "not_all_ready"}), 400
+        redirect_url = "/quick?go=1" if mode == 'quick' else "/ranked?go=1"
+        return jsonify({"ok": True, "redirect_url": redirect_url})
 
     return app
 

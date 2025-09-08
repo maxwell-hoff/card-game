@@ -56,7 +56,7 @@
       </div>
     </div>
     <script>
-      window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson | safe }};
+      window.__FIREBASE_CONFIG__ = JSON.parse('{{ firebase_config | tojson | safe }}');
     </script>
     <script type="module">
       const cfg = window.__FIREBASE_CONFIG__ || {};
@@ -191,8 +191,10 @@
                     const j = await r.json();
                     if (j && j.ok) {
                       row.remove();
-                      // Optional: refresh party on quick page if present
-                      if (window.refreshParty) window.refreshParty();
+                      // Redirect both players to source lobby for readying
+                      const mode = j.mode || inv.mode || 'quick';
+                      const dest = mode === 'ranked' ? '/ranked' : '/quick';
+                      location.href = dest;
                     } else {
                       alert('Invite expired or invalid.');
                     }
