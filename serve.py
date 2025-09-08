@@ -341,17 +341,22 @@ def create_app(db_path: str) -> Flask:
         # Mark loss and complete
         update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
         complete_session(conn, sid)
-        # Fetch solution steps
+        # Fetch solution steps and initial layout
         steps: list = []
+        layout: Optional[dict] = None
         try:
             if puzzle_id:
                 sp = get_puzzle_by_id(conn, int(puzzle_id))
-                if sp and sp.actions_json:
-                    actions = json.loads(sp.actions_json)
-                    steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
+                if sp:
+                    if sp.actions_json:
+                        actions = json.loads(sp.actions_json)
+                        steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
+                    if sp.start_layout_json:
+                        layout = json.loads(sp.start_layout_json)
         except Exception:
             steps = []
-        return jsonify({"ok": True, "steps": steps})
+            layout = None
+        return jsonify({"ok": True, "steps": steps, "layout": layout})
 
     # --- Invites API ---
     @app.route("/api/invites/create", methods=["POST"])
@@ -636,17 +641,22 @@ def create_app(db_path: str) -> Flask:
         # Mark loss and complete
         update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
         complete_session(conn, sid)
-        # Fetch solution steps
+        # Fetch solution steps and initial layout
         steps: list = []
+        layout: Optional[dict] = None
         try:
             if puzzle_id:
                 sp = get_puzzle_by_id(conn, int(puzzle_id))
-                if sp and sp.actions_json:
-                    actions = json.loads(sp.actions_json)
-                    steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
+                if sp:
+                    if sp.actions_json:
+                        actions = json.loads(sp.actions_json)
+                        steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
+                    if sp.start_layout_json:
+                        layout = json.loads(sp.start_layout_json)
         except Exception:
             steps = []
-        return jsonify({"ok": True, "steps": steps})
+            layout = None
+        return jsonify({"ok": True, "steps": steps, "layout": layout})
 
     @app.route("/stats")
     def stats():
