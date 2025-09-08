@@ -117,15 +117,16 @@
       <div style="margin-top:8px;">
         <button id="give-up-btn" style="padding:4px 8px; background:#f7e0e0; border:1px solid #e0b0b0; border-radius:4px;">Give Up</button>
       </div>
-      <!-- Solution steps modal -->
+      <!-- Solution modal -->
       <div id="solution-modal" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background: rgba(0,0,0,0.4); z-index: 9999;">
         <div style="background:#fff; width: 520px; max-width: 95vw; margin: 8% auto; padding: 16px; border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.3);">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <h3 style="margin:0;">Solution Steps</h3>
+            <h3 style="margin:0;">Solution</h3>
             <button id="solution-modal-close" style="padding:4px 8px;">Close</button>
           </div>
+          <div id="solution-initial" style="margin-bottom:10px;"></div>
           <div id="solution-steps">
-            <p>Loading steps…</p>
+            <p>Loading…</p>
           </div>
         </div>
       </div>
@@ -194,6 +195,7 @@
     const giveUpBtn = document.getElementById('give-up-btn');
     const solutionModal = document.getElementById('solution-modal');
     const solutionSteps = document.getElementById('solution-steps');
+    const solutionInitial = document.getElementById('solution-initial');
     const solutionModalClose = document.getElementById('solution-modal-close');
     if (solutionModalClose && solutionModal) {
       solutionModalClose.addEventListener('click', () => {
@@ -215,6 +217,54 @@
           const j = await r.json().catch(() => null);
           if (j && j.ok) {
             const steps = Array.isArray(j.steps) ? j.steps : [];
+            const layout = j.layout || null;
+            if (solutionInitial) {
+              if (layout && layout.rows && layout.row_reserves && layout.col_reserves) {
+                // Render initial layout using same grid markup
+                const rows = layout.rows;
+                const row_res = layout.row_reserves;
+                const col_res = layout.col_reserves;
+                const opp = layout.opponent_row_index;
+                const container = document.createElement('div');
+                const title = document.createElement('div');
+                title.innerHTML = '<strong>Initial Setup</strong>';
+                title.style.marginBottom = '6px';
+                container.appendChild(title);
+                const grid = document.createElement('div');
+                grid.className = 'grid';
+                // Bottom reserves row
+                {
+                  const row = document.createElement('div'); row.className = 'row';
+                  let cell = document.createElement('div'); cell.className = 'cell reserve'; cell.innerHTML = '&nbsp;'; row.appendChild(cell);
+                  cell = document.createElement('div'); cell.className = 'cell reserve'; cell.innerHTML = '&nbsp;'; row.appendChild(cell);
+                  for (let c = 0; c < 5; c++) { const d = document.createElement('div'); d.className = 'cell reserve'; d.textContent = String(col_res[c][1] ?? ''); row.appendChild(d); }
+                  grid.appendChild(row);
+                }
+                // Top reserves row
+                {
+                  const row = document.createElement('div'); row.className = 'row';
+                  let cell = document.createElement('div'); cell.className = 'cell reserve'; cell.innerHTML = '&nbsp;'; row.appendChild(cell);
+                  cell = document.createElement('div'); cell.className = 'cell reserve'; cell.innerHTML = '&nbsp;'; row.appendChild(cell);
+                  for (let c = 0; c < 5; c++) { const d = document.createElement('div'); d.className = 'cell reserve'; d.textContent = String(col_res[c][0] ?? ''); row.appendChild(d); }
+                  grid.appendChild(row);
+                }
+                // Main rows
+                for (let rr = 0; rr < rows.length; rr++) {
+                  const row = document.createElement('div'); row.className = 'row';
+                  const resBot = document.createElement('div'); resBot.className = 'cell reserve'; resBot.textContent = String(row_res[rr][1] ?? ''); row.appendChild(resBot);
+                  const resTop = document.createElement('div'); resTop.className = 'cell reserve'; resTop.textContent = String(row_res[rr][0] ?? ''); row.appendChild(resTop);
+                  for (let cc = 0; cc < 5; cc++) {
+                    const d = document.createElement('div'); d.className = 'cell' + (rr === opp ? ' opponent' : ''); d.textContent = String(rows[rr][cc] ?? ''); row.appendChild(d);
+                  }
+                  grid.appendChild(row);
+                }
+                solutionInitial.innerHTML = '';
+                solutionInitial.appendChild(title);
+                solutionInitial.appendChild(grid);
+              } else {
+                solutionInitial.innerHTML = '';
+              }
+            }
             if (solutionSteps) {
               if (steps.length > 0) {
                 const ol = document.createElement('ol');
