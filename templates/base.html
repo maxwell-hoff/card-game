@@ -9,6 +9,7 @@
     <style>
       body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
       header { background: #222; color: #fff; padding: 10px 16px; }
+      nav { display: flex; align-items: center; }
       nav a { color: #fff; margin-right: 12px; text-decoration: none; }
       .container { padding: 16px; }
       .grid { display: inline-block; margin: 10px 0; }
@@ -28,7 +29,7 @@
         <a href="/stats">Stats</a>
         <a href="/leaderboard">Leaderboard</a>
         {% endif %}
-        <span style="float:right">
+        <span style="margin-left:auto; display:flex; align-items:center;">
           <span id="user-display" style="margin-right:8px;">{% if session_user %}Signed in as {{ session_user.display_name }}{% if session_user.user_code %} (Player ID: {{ session_user.user_code }}){% endif %}{% else %}Not signed in{% endif %}</span>
           {% if not session_user %}
           <button id="google-login-btn" style="padding:4px 8px;">Sign in with Google</button>
