@@ -129,23 +129,14 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/")
     def index():
-        # Show landing page for logged-out users; redirect signed-in users to Quick Play
-        if session.get("user"):
-            return redirect(url_for("quick"))
+        # Always show landing page, regardless of auth
         return render_template("landing.html")
 
     @app.route("/quick")
     def quick():
         # Require sign-in to play/fetch puzzles
         if not session.get("user"):
-            return render_template(
-                "quick.html",
-                puzzle=None,
-                turns_filter=None,
-                requested=False,
-                require_login=True,
-                party=[],
-            )
+            return redirect(url_for("index"))
         current_user = session.get("user")
         inviter_id = current_user.get("id") if current_user else None
         # Current party for inviter: list of (user_id, display_name)
@@ -276,6 +267,8 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/puzzle/<int:puzzle_id>")
     def puzzle_detail(puzzle_id: int):
+        if not session.get("user"):
+            return redirect(url_for("index"))
         sp = get_puzzle_by_id(conn, puzzle_id)
         if not sp:
             return render_template("puzzle.html", puzzle=None)
@@ -288,7 +281,7 @@ def create_app(db_path: str) -> Flask:
     def report():
         # Block unauthenticated submissions
         if not session.get("user"):
-            return redirect(url_for("quick"))
+            return redirect(url_for("index"))
         puzzle_id = int(request.form.get("puzzle_id"))
         solved_flag = request.form.get("solved") == "1"
         seconds = request.form.get("seconds")
@@ -476,14 +469,7 @@ def create_app(db_path: str) -> Flask:
     def ranked():
         # Require sign-in
         if not session.get("user"):
-            return render_template(
-                "ranked.html",
-                puzzle=None,
-                requested=False,
-                require_login=True,
-                party=[],
-                elo=None,
-            )
+            return redirect(url_for("index"))
         current_user = session.get("user")
         inviter_id = current_user.get("id") if current_user else None
         # Current party
@@ -664,6 +650,8 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/stats")
     def stats():
+        if not session.get("user"):
+            return redirect(url_for("index"))
         # Show a simple log summary
         cur = conn.cursor()
         cur.execute(
@@ -701,6 +689,8 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/leaderboard")
     def leaderboard():
+        if not session.get("user"):
+            return redirect(url_for("index"))
         # Pagination
         try:
             page = int(request.args.get("page", "1"))
