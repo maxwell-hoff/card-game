@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import os
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from app.actions import humanize_actions_dicts
 
 from app.db import (
     get_conn,
@@ -128,20 +129,14 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/")
     def index():
-        return redirect(url_for("quick"))
+        # Always show landing page, regardless of auth
+        return render_template("landing.html")
 
     @app.route("/quick")
     def quick():
         # Require sign-in to play/fetch puzzles
         if not session.get("user"):
-            return render_template(
-                "quick.html",
-                puzzle=None,
-                turns_filter=None,
-                requested=False,
-                require_login=True,
-                party=[],
-            )
+            return redirect(url_for("index"))
         current_user = session.get("user")
         inviter_id = current_user.get("id") if current_user else None
         # Current party for inviter: list of (user_id, display_name)
@@ -272,6 +267,8 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/puzzle/<int:puzzle_id>")
     def puzzle_detail(puzzle_id: int):
+        if not session.get("user"):
+            return redirect(url_for("index"))
         sp = get_puzzle_by_id(conn, puzzle_id)
         if not sp:
             return render_template("puzzle.html", puzzle=None)
@@ -284,7 +281,7 @@ def create_app(db_path: str) -> Flask:
     def report():
         # Block unauthenticated submissions
         if not session.get("user"):
-            return redirect(url_for("quick"))
+            return redirect(url_for("index"))
         puzzle_id = int(request.form.get("puzzle_id"))
         solved_flag = request.form.get("solved") == "1"
         seconds = request.form.get("seconds")
@@ -318,6 +315,43 @@ def create_app(db_path: str) -> Flask:
         if turns_filter:
             kwargs["turns"] = turns_filter
         return redirect(url_for("quick", **kwargs))
+
+    @app.route("/quick/give_up", methods=["POST"])
+    def quick_give_up():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        session_id = data.get("session_id")
+        try:
+            session_id = int(session_id)
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_session_id"}), 400
+        sess = get_session_by_id(conn, session_id)
+        if not sess:
+            return jsonify({"ok": False, "error": "session_not_found"}), 404
+        sid, puzzle_id, _exp_turns, inviter_id, status, _completed_at, _started_at = sess
+        if status != 'active':
+            return jsonify({"ok": False, "error": "not_active"}), 400
+        # Verify membership
+        members = get_session_members_with_names(conn, sid)
+        member_ids = [m[0] for m in members]
+        if current.get("id") not in ([inviter_id] + member_ids):
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+        # Mark loss and complete
+        update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
+        complete_session(conn, sid)
+        # Fetch solution steps
+        steps: list = []
+        try:
+            if puzzle_id:
+                sp = get_puzzle_by_id(conn, int(puzzle_id))
+                if sp and sp.actions_json:
+                    actions = json.loads(sp.actions_json)
+                    steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
+        except Exception:
+            steps = []
+        return jsonify({"ok": True, "steps": steps})
 
     # --- Invites API ---
     @app.route("/api/invites/create", methods=["POST"])
@@ -435,14 +469,7 @@ def create_app(db_path: str) -> Flask:
     def ranked():
         # Require sign-in
         if not session.get("user"):
-            return render_template(
-                "ranked.html",
-                puzzle=None,
-                requested=False,
-                require_login=True,
-                party=[],
-                elo=None,
-            )
+            return redirect(url_for("index"))
         current_user = session.get("user")
         inviter_id = current_user.get("id") if current_user else None
         # Current party
@@ -598,7 +625,7 @@ def create_app(db_path: str) -> Flask:
         sess = get_session_by_id(conn, session_id)
         if not sess:
             return jsonify({"ok": False, "error": "session_not_found"}), 404
-        sid, _pid, _exp_turns, inviter_id, status, _completed_at, _started_at = sess
+        sid, puzzle_id, _exp_turns, inviter_id, status, _completed_at, _started_at = sess
         if status != 'active':
             return jsonify({"ok": False, "error": "not_active"}), 400
         # Verify membership
@@ -609,10 +636,22 @@ def create_app(db_path: str) -> Flask:
         # Mark loss and complete
         update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
         complete_session(conn, sid)
-        return jsonify({"ok": True})
+        # Fetch solution steps
+        steps: list = []
+        try:
+            if puzzle_id:
+                sp = get_puzzle_by_id(conn, int(puzzle_id))
+                if sp and sp.actions_json:
+                    actions = json.loads(sp.actions_json)
+                    steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
+        except Exception:
+            steps = []
+        return jsonify({"ok": True, "steps": steps})
 
     @app.route("/stats")
     def stats():
+        if not session.get("user"):
+            return redirect(url_for("index"))
         # Show a simple log summary
         cur = conn.cursor()
         cur.execute(
@@ -650,6 +689,8 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/leaderboard")
     def leaderboard():
+        if not session.get("user"):
+            return redirect(url_for("index"))
         # Pagination
         try:
             page = int(request.args.get("page", "1"))

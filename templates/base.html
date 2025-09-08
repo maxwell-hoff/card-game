@@ -3,10 +3,13 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Card Game Assistant</title>
+    <title>Cascade: Coop Strategy Card Game</title>
+    <link rel="icon" href="{{ url_for('static', filename='images/card_game_thumbnail.png') }}" sizes="32x32" type="image/png">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='images/card_game_thumbnail.png') }}" sizes="32x32" type="image/png">
     <style>
       body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
       header { background: #222; color: #fff; padding: 10px 16px; }
+      nav { display: flex; align-items: center; }
       nav a { color: #fff; margin-right: 12px; text-decoration: none; }
       .container { padding: 16px; }
       .grid { display: inline-block; margin: 10px 0; }
@@ -19,11 +22,14 @@
   <body>
     <header>
       <nav>
+        {% if session_user %}
+        <a href="/">Home</a>
         <a href="/quick">Quick Play</a>
         <a href="/ranked">Ranked</a>
         <a href="/stats">Stats</a>
         <a href="/leaderboard">Leaderboard</a>
-        <span style="float:right">
+        {% endif %}
+        <span style="margin-left:auto; display:flex; align-items:center;">
           <span id="user-display" style="margin-right:8px;">{% if session_user %}Signed in as {{ session_user.display_name }}{% if session_user.user_code %} (Player ID: {{ session_user.user_code }}){% endif %}{% else %}Not signed in{% endif %}</span>
           {% if not session_user %}
           <button id="google-login-btn" style="padding:4px 8px;">Sign in with Google</button>
@@ -50,7 +56,7 @@
       </div>
     </div>
     <script>
-      window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson }};
+      window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson | safe }};
     </script>
     <script type="module">
       const cfg = window.__FIREBASE_CONFIG__ || {};
