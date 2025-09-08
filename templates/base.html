@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Card Game Assistant</title>
+    <title>Cascade: Coop Strategy Card Game</title>
     <style>
       body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
       header { background: #222; color: #fff; padding: 10px 16px; }
@@ -50,7 +50,7 @@
       </div>
     </div>
     <script>
-      window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson }};
+      window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson | safe }};
     </script>
     <script type="module">
       const cfg = window.__FIREBASE_CONFIG__ || {};

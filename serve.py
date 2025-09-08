@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import os
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from app.actions import humanize_actions_dicts
 
 from app.db import (
     get_conn,
@@ -598,7 +599,7 @@ def create_app(db_path: str) -> Flask:
         sess = get_session_by_id(conn, session_id)
         if not sess:
             return jsonify({"ok": False, "error": "session_not_found"}), 404
-        sid, _pid, _exp_turns, inviter_id, status, _completed_at, _started_at = sess
+        sid, puzzle_id, _exp_turns, inviter_id, status, _completed_at, _started_at = sess
         if status != 'active':
             return jsonify({"ok": False, "error": "not_active"}), 400
         # Verify membership
@@ -609,7 +610,17 @@ def create_app(db_path: str) -> Flask:
         # Mark loss and complete
         update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
         complete_session(conn, sid)
-        return jsonify({"ok": True})
+        # Fetch solution steps
+        steps: list = []
+        try:
+            if puzzle_id:
+                sp = get_puzzle_by_id(conn, int(puzzle_id))
+                if sp and sp.actions_json:
+                    actions = json.loads(sp.actions_json)
+                    steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
+        except Exception:
+            steps = []
+        return jsonify({"ok": True, "steps": steps})
 
     @app.route("/stats")
     def stats():
