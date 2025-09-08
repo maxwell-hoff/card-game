@@ -320,6 +320,43 @@ def create_app(db_path: str) -> Flask:
             kwargs["turns"] = turns_filter
         return redirect(url_for("quick", **kwargs))
 
+    @app.route("/quick/give_up", methods=["POST"])
+    def quick_give_up():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        session_id = data.get("session_id")
+        try:
+            session_id = int(session_id)
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_session_id"}), 400
+        sess = get_session_by_id(conn, session_id)
+        if not sess:
+            return jsonify({"ok": False, "error": "session_not_found"}), 404
+        sid, puzzle_id, _exp_turns, inviter_id, status, _completed_at, _started_at = sess
+        if status != 'active':
+            return jsonify({"ok": False, "error": "not_active"}), 400
+        # Verify membership
+        members = get_session_members_with_names(conn, sid)
+        member_ids = [m[0] for m in members]
+        if current.get("id") not in ([inviter_id] + member_ids):
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+        # Mark loss and complete
+        update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
+        complete_session(conn, sid)
+        # Fetch solution steps
+        steps: list = []
+        try:
+            if puzzle_id:
+                sp = get_puzzle_by_id(conn, int(puzzle_id))
+                if sp and sp.actions_json:
+                    actions = json.loads(sp.actions_json)
+                    steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
+        except Exception:
+            steps = []
+        return jsonify({"ok": True, "steps": steps})
+
     # --- Invites API ---
     @app.route("/api/invites/create", methods=["POST"])
     def api_invites_create():
