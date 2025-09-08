@@ -122,6 +122,8 @@
                   const j = await r.json().catch(() => null);
                   dlog('POST /api/login response body', j);
                   if (j && j.ok) {
+                    // Expose session user id for lobby scripts
+                    try { window.__SESSION_USER_ID__ = j.user && j.user.id; } catch (_) {}
                     location.reload();
                   } else {
                     alert('Login failed');

@@ -871,7 +871,8 @@ def create_app(db_path: str) -> Flask:
         members = [(inviter_id, inviter_display)] + party_rows
         ready_map = lobby_get_ready_map(conn, inviter_id, mode)
         party = [{"user_id": uid, "display_name": name, "ready": bool(ready_map.get(uid, False))} for (uid, name) in members]
-        can_start = all(m.get("ready") for m in party) and len(party) >= 1
+        # If solo, allow immediate start (no ready gate)
+        can_start = True if len(party) <= 1 else all(m.get("ready") for m in party)
         # Existing active session id
         active_session_id = None
         if mode == 'quick':
@@ -922,7 +923,8 @@ def create_app(db_path: str) -> Flask:
         party_rows = get_party_for_inviter(conn, inviter_id, mode=mode)
         members = [(inviter_id, inviter_display)] + party_rows
         ready_map = lobby_get_ready_map(conn, inviter_id, mode)
-        if not members or not all(bool(ready_map.get(uid, False)) for (uid, _name) in members):
+        # Allow solo start without readiness; for multi, require all ready
+        if len(members) > 1 and not all(bool(ready_map.get(uid, False)) for (uid, _name) in members):
             return jsonify({"ok": False, "error": "not_all_ready"}), 400
         redirect_url = "/quick?go=1" if mode == 'quick' else "/ranked?go=1"
         return jsonify({"ok": True, "redirect_url": redirect_url})

@@ -35,7 +35,7 @@
             </ul>
           {% endif %}
         </div>
-        <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+        <div id="lobby-controls" style="margin-top:8px; display:flex; gap:8px; align-items:center;">
           <button id="ready-toggle" style="padding:4px 8px;">Ready</button>
           <button id="start-btn" style="padding:4px 8px; display:none;">Go</button>
           <span id="lobby-status" style="color:#555;"></span>
@@ -187,9 +187,8 @@
         const pills = document.querySelectorAll('.ready-pill');
         pills.forEach((pill) => {
           const attr = pill.getAttribute('data-user');
-          let uid = null;
-          if (attr === 'self') uid = 'self';
-          const matching = party.find(p => String(p.user_id) === String(uid) || (uid === 'self' && p.is_self));
+          const uid = attr === 'self' ? window.__SESSION_USER_ID__ : attr;
+          const matching = party.find(p => String(p.user_id) === String(uid));
           const ready = matching ? !!matching.ready : false;
           pill.textContent = ready ? '✓ ready' : 'not ready';
           pill.style.fontSize = '90%';
@@ -204,11 +203,11 @@
           const j = await r.json().catch(() => null);
           if (!j || !j.ok) return;
           const party = Array.isArray(j.party) ? j.party : [];
-          const userDisplay = document.getElementById('user-display');
-          const myName = userDisplay ? (userDisplay.textContent || '').replace(/^Signed in as\s+/, '').split(' (Player ID')[0] : '';
-          party.forEach(p => { p.is_self = (p.display_name === myName); });
+          // Hide ready UI when solo
+          const controls = document.getElementById('lobby-controls');
+          if (controls) controls.style.display = (party.length <= 1) ? 'none' : 'flex';
           renderReadyPills(party);
-          if (lobbyStatus) lobbyStatus.textContent = j.can_start ? 'All ready.' : 'Waiting for players…';
+          if (lobbyStatus) lobbyStatus.textContent = (party.length <= 1) ? '' : (j.can_start ? 'All ready.' : 'Waiting for players…');
           if (startBtn) startBtn.style.display = j.can_start ? 'inline-block' : 'none';
         } catch (_) {}
         finally {
