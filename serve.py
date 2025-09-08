@@ -46,6 +46,12 @@ from app.db import (
     lobby_get_ready_map,
     get_active_quick_sessions_for_user,
 )
+ 
+def inviter_display_name(conn, inviter_id: int) -> str:
+    cur = conn.cursor()
+    cur.execute("SELECT display_name FROM users WHERE id = ?", (inviter_id,))
+    row = cur.fetchone()
+    return str(row[0]) if row and row[0] else "Host"
 from app.elo import EloConfig, compute_user_elo, RankedDifficultyConfig, select_ranked_level
 
 import firebase_admin
@@ -151,7 +157,8 @@ def create_app(db_path: str) -> Flask:
                 host_id = latest_inviter
         # Current party for host: list of (user_id, display_name)
         party_rows = get_party_for_inviter(conn, host_id, mode='quick') if host_id else []
-        party = [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
+        # Build unified lobby: include host as a member so both see identical names list
+        party = [{"user_id": host_id, "display_name": inviter_display_name(conn, host_id)}] + [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         turns_q = request.args.get("turns")
         requested = request.args.get("go") == "1"
         session_q = request.args.get("session_id")
@@ -508,7 +515,7 @@ def create_app(db_path: str) -> Flask:
                 host_id = latest_inviter
         # Current party for host
         party_rows = get_party_for_inviter(conn, host_id, mode='ranked') if host_id else []
-        party = [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
+        party = [{"user_id": host_id, "display_name": inviter_display_name(conn, host_id)}] + [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         requested = request.args.get("go") == "1"
         session_q = request.args.get("session_id")
         # Players count (inviter + invitees)
@@ -863,10 +870,7 @@ def create_app(db_path: str) -> Flask:
         if latest_inviter:
             inviter_id = latest_inviter
         # Build party list (inviter + accepted invitees)
-        cur = conn.cursor()
-        cur.execute("SELECT display_name FROM users WHERE id = ?", (inviter_id,))
-        row = cur.fetchone()
-        inviter_display = str(row[0]) if row else "Host"
+        inviter_display = inviter_display_name(conn, inviter_id)
         party_rows = get_party_for_inviter(conn, inviter_id, mode=mode)
         members = [(inviter_id, inviter_display)] + party_rows
         ready_map = lobby_get_ready_map(conn, inviter_id, mode)

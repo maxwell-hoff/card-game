@@ -24,12 +24,7 @@
         </div>
         <div id="party-list" style="margin-top:8px;">
           {% if party and party|length > 0 %}
-            <ul style="margin:0; padding-left:18px;">
-              <li><em>You</em> <span class="ready-pill" data-user="self"></span></li>
-              {% for m in party %}
-                <li>{{ m.display_name }} <span class="ready-pill" data-user="{{ m.user_id }}"></span></li>
-              {% endfor %}
-            </ul>
+            <ul id="party-ul" style="margin:0; padding-left:18px;"></ul>
           {% else %}
             <!-- <p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p> -->
           {% endif %}
@@ -161,16 +156,9 @@
             // list.innerHTML = '<p style="margin:6px 0 0 0;">Only you for now. Invite teammates with the button above.</p>';
           } else {
             const ul = document.createElement('ul');
+            ul.id = 'party-ul';
             ul.style.margin = '0';
             ul.style.paddingLeft = '18px';
-            const liYou = document.createElement('li');
-            liYou.innerHTML = '<em>You</em> <span class="ready-pill" data-user="self"></span>';
-            ul.appendChild(liYou);
-            party.forEach((m) => {
-              const li = document.createElement('li');
-              li.innerHTML = m.display_name + ' <span class="ready-pill" data-user="' + String(m.user_id) + '"></span>';
-              ul.appendChild(li);
-            });
             list.innerHTML = '';
             list.appendChild(ul);
           }
@@ -200,6 +188,17 @@
         });
       }
 
+      function renderParty(party) {
+        const ul = document.getElementById('party-ul');
+        if (!ul) return;
+        ul.innerHTML = '';
+        party.forEach((m) => {
+          const li = document.createElement('li');
+          li.innerHTML = m.display_name + ' <span class="ready-pill" data-user="' + String(m.user_id) + '"></span>';
+          ul.appendChild(li);
+        });
+      }
+
       async function fetchStatus() {
         try {
           const r = await fetch('/api/lobby/status?mode=quick');
@@ -209,6 +208,7 @@
           // Hide ready UI when solo
           const controls = document.getElementById('lobby-controls');
           if (controls) controls.style.display = (party.length <= 1) ? 'none' : 'flex';
+          renderParty(party);
           renderReadyPills(party);
           if (lobbyStatus) lobbyStatus.textContent = (party.length <= 1) ? '' : (j.can_start ? 'All ready.' : 'Waiting for players…');
           if (startBtn) startBtn.style.display = j.can_start ? 'inline-block' : 'none';
