@@ -157,9 +157,9 @@ def create_app(db_path: str) -> Flask:
             latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, inviter_id, 'quick')
             if latest_inviter:
                 host_id = latest_inviter
-        # Current party for host: list of (user_id, display_name)
+        # Current party for host: list of accepted invitees (user_id, display_name)
         party_rows = get_party_for_inviter(conn, host_id, mode='quick') if host_id else []
-        # Build unified lobby: include host as a member so both see identical names list
+        # Build unified lobby: include host in the local party list for display, but invited count excludes host
         party = [{"user_id": host_id, "display_name": inviter_display_name(conn, host_id)}] + [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         turns_q = request.args.get("turns")
         requested = request.args.get("go") == "1"
@@ -171,8 +171,9 @@ def create_app(db_path: str) -> Flask:
         if turns_filter is not None and turns_filter < 1:
             turns_filter = None
 
-        # Determine players count from party (inviter + accepted invitees), min 1, max 5
-        players_filter = 1 + len(party)
+        # Determine total players for puzzle selection (host + accepted invitees)
+        invited_count = len(party_rows)
+        players_filter = 1 + invited_count
         if players_filter < 1:
             players_filter = 1
         if players_filter > 5:
@@ -243,7 +244,7 @@ def create_app(db_path: str) -> Flask:
                 requested=False,
                 require_login=False,
                 party=party,
-                players_count=players_filter,
+                players_count=invited_count,
                 active_sessions=active,
             )
 
@@ -262,7 +263,7 @@ def create_app(db_path: str) -> Flask:
                 requested=True,
                 require_login=False,
                 party=party,
-                players_count=players_filter,
+                players_count=invited_count,
             )
         layout = json.loads(puzzle.start_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
@@ -286,7 +287,7 @@ def create_app(db_path: str) -> Flask:
             requested=True,
             require_login=False,
             party=party,
-            players_count=players_filter,
+            players_count=invited_count,
             session_id=session_id,
         )
 
@@ -537,8 +538,9 @@ def create_app(db_path: str) -> Flask:
         party = [{"user_id": host_id, "display_name": inviter_display_name(conn, host_id)}] + [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         requested = request.args.get("go") == "1"
         session_q = request.args.get("session_id")
-        # Players count (inviter + invitees)
-        players_filter = max(1, min(5, 1 + len(party)))
+        # Players count for selection (host + accepted invitees)
+        invited_count = len(party_rows)
+        players_filter = max(1, min(5, 1 + invited_count))
 
         # Ranked-only ELO
         ranked_rows = get_user_ranked_results_with_puzzle_meta(conn, inviter_id)
@@ -606,7 +608,7 @@ def create_app(db_path: str) -> Flask:
                 requested=False,
                 require_login=False,
                 party=party,
-                players_count=players_filter,
+                players_count=invited_count,
                 active_sessions=active,
                 elo=elo_value,
             )
@@ -640,7 +642,7 @@ def create_app(db_path: str) -> Flask:
                 requested=True,
                 require_login=False,
                 party=party,
-                players_count=players_filter,
+                players_count=invited_count,
                 active_sessions=[],
                 elo=elo_value,
                 note="No suitable ranked puzzle found. Please generate more puzzles.",
@@ -666,7 +668,7 @@ def create_app(db_path: str) -> Flask:
             requested=True,
             require_login=False,
             party=party,
-            players_count=players_filter,
+            players_count=invited_count,
             session_id=session_id,
             elo=elo_value,
         )
