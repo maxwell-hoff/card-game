@@ -137,6 +137,28 @@
   {% endif %}
 
   <script type="module">
+    // Poll session status so all players exit when any finishes
+    (function sessionStatusPolling(){
+      const sessionIdInput = document.querySelector('input[name="session_id"]');
+      const sid = sessionIdInput ? Number(sessionIdInput.value) : null;
+      if (!sid) return;
+      let timer = null;
+      async function poll() {
+        try {
+          const r = await fetch(`/api/game_session/status?session_id=${sid}`);
+          const j = await r.json().catch(() => null);
+          if (j && j.ok) {
+            if (j.status === 'completed') {
+              location.href = '/ranked';
+              return;
+            }
+          }
+        } catch (_) {}
+        timer = setTimeout(poll, 3000);
+      }
+      poll();
+      window.addEventListener('beforeunload', () => { if (timer) clearTimeout(timer); });
+    })();
     // Invite helpers reused from quick
     window.refreshParty = async function refreshParty() {
       try {

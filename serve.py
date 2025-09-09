@@ -1031,6 +1031,31 @@ def create_app(db_path: str) -> Flask:
             )
             return jsonify({"ok": True, "redirect_url": "/ranked?session_id=" + str(session_id)})
 
+    # --- Game session status API for client polling ---
+    @app.route("/api/game_session/status", methods=["GET"])
+    def api_game_session_status():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        try:
+            sid = int(request.args.get("session_id"))
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_session_id"}), 400
+        sess = get_session_by_id(conn, sid)
+        if not sess:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        # Fetch status and mode
+        cur = conn.cursor()
+        cur.execute("SELECT status, mode FROM game_sessions WHERE id = ?", (sid,))
+        row = cur.fetchone()
+        status = str(row[0]) if row else 'active'
+        mode = str(row[1]) if row and row[1] else 'quick'
+        # Determine if solved (any solved=1 in results for this session)
+        cur.execute("SELECT MAX(solved) FROM game_results WHERE session_id = ?", (sid,))
+        solved_row = cur.fetchone()
+        solved_flag = bool(solved_row[0]) if solved_row and solved_row[0] is not None else False
+        return jsonify({"ok": True, "status": status, "mode": mode, "solved": solved_flag})
+
     return app
 
 
