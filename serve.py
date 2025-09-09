@@ -244,7 +244,7 @@ def create_app(db_path: str) -> Flask:
                 requested=False,
                 require_login=False,
                 party=party,
-                players_count=invited_count,
+                players_count=players_filter,
                 active_sessions=active,
             )
 
@@ -263,7 +263,7 @@ def create_app(db_path: str) -> Flask:
                 requested=True,
                 require_login=False,
                 party=party,
-                players_count=invited_count,
+                players_count=players_filter,
             )
         layout = json.loads(puzzle.start_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
@@ -287,7 +287,7 @@ def create_app(db_path: str) -> Flask:
             requested=True,
             require_login=False,
             party=party,
-            players_count=invited_count,
+            players_count=players_filter,
             session_id=session_id,
         )
 
@@ -473,6 +473,7 @@ def create_app(db_path: str) -> Flask:
             mode = "quick"
         rows = get_party_for_inviter(conn, inviter_id, mode=mode)
         party = [{"user_id": r[0], "display_name": r[1]} for r in rows]
+        # players_count is total participants (host + invitees)
         return jsonify({"ok": True, "party": party, "players_count": 1 + len(party)})
 
     @app.route("/api/login", methods=["POST"])
