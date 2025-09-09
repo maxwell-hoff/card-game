@@ -56,7 +56,10 @@
       </div>
     </div>
     <script>
-      window.__FIREBASE_CONFIG__ = {{ firebase_config | tojson | safe }};
+      window.__FIREBASE_CONFIG__ = JSON.parse('{{ firebase_config | tojson | safe }}');
+      // Expose current session user id for lobby logic; null if not signed in.
+      // Inject as JSON string to avoid template parsing issues.
+      window.__SESSION_USER_ID__ = JSON.parse('{{ (session_user.id if session_user else None) | tojson | safe }}');
     </script>
     <script type="module">
       const cfg = window.__FIREBASE_CONFIG__ || {};
@@ -122,6 +125,8 @@
                   const j = await r.json().catch(() => null);
                   dlog('POST /api/login response body', j);
                   if (j && j.ok) {
+                    // Expose session user id for lobby scripts
+                    try { window.__SESSION_USER_ID__ = j.user && j.user.id; } catch (_) {}
                     location.reload();
                   } else {
                     alert('Login failed');
@@ -191,8 +196,10 @@
                     const j = await r.json();
                     if (j && j.ok) {
                       row.remove();
-                      // Optional: refresh party on quick page if present
-                      if (window.refreshParty) window.refreshParty();
+                      // Redirect both players to source lobby for readying
+                      const mode = j.mode || inv.mode || 'quick';
+                      const dest = mode === 'ranked' ? '/ranked' : '/quick';
+                      location.href = dest;
                     } else {
                       alert('Invite expired or invalid.');
                     }

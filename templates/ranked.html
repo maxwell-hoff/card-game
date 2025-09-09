@@ -10,7 +10,7 @@
       {% set has_active = active_sessions and active_sessions|length > 0 %}
       <form method="get" action="/ranked">
         <input type="hidden" name="go" value="1" />
-        <button type="submit" {% if has_active %}disabled title="You have an active ranked puzzle. Complete or give up first." style="opacity:0.6; cursor:not-allowed;"{% endif %}>Find Match</button>
+        <button id="go-top-btn" type="submit" {% if has_active %}disabled title="You have an active ranked puzzle. Complete or give up first." style="opacity:0.6; cursor:not-allowed;"{% endif %}>Find Match</button>
       </form>
       {% if has_active %}
         <div style="margin-top:6px; color:#666; font-size: 90%;">Complete your current ranked puzzle to find a new match.</div>
@@ -26,14 +26,13 @@
           </div>
         </div>
         <div id="party-list" style="margin-top:8px;">
-          {% if party and party|length > 0 %}
-            <ul style="margin:0; padding-left:18px;">
-              <li><em>You</em></li>
-              {% for m in party %}
-                <li>{{ m.display_name }}</li>
-              {% endfor %}
-            </ul>
+          {% if party and party|length > 1 %}
+            <ul id="party-ul" style="margin:0; padding-left:18px;"></ul>
           {% endif %}
+        </div>
+        <div id="lobby-controls" style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+          <button id="ready-toggle" style="padding:4px 8px;">Ready</button>
+          <span id="lobby-status" style="color:#555;"></span>
         </div>
         <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
       </div>
@@ -138,10 +137,33 @@
   {% endif %}
 
   <script type="module">
+    // Poll session status so all players exit when any finishes
+    (function sessionStatusPolling(){
+      const sessionIdInput = document.querySelector('input[name="session_id"]');
+      const sid = sessionIdInput ? Number(sessionIdInput.value) : null;
+      if (!sid) return;
+      let timer = null;
+      async function poll() {
+        try {
+          const r = await fetch(`/api/game_session/status?session_id=${sid}`);
+          const j = await r.json().catch(() => null);
+          if (j && j.ok) {
+            const paused = window.__SESSION_POLL_PAUSED__ === true;
+            if (j.status === 'completed' && !paused) {
+              location.href = '/ranked';
+              return;
+            }
+          }
+        } catch (_) {}
+        timer = setTimeout(poll, 3000);
+      }
+      poll();
+      window.addEventListener('beforeunload', () => { if (timer) clearTimeout(timer); });
+    })();
     // Invite helpers reused from quick
     window.refreshParty = async function refreshParty() {
       try {
-        const r = await fetch('/api/party');
+        const r = await fetch('/api/party?mode=ranked');
         if (!r.ok) return;
         const j = await r.json();
         if (!j || !j.ok) return;
@@ -150,25 +172,184 @@
         const list = document.getElementById('party-list');
         if (playersCountEl) playersCountEl.textContent = String(j.players_count || (1 + party.length));
         if (list) {
-          if (party.length === 0) {
+          if (party.length <= 1) {
+            list.innerHTML = '';
           } else {
             const ul = document.createElement('ul');
+            ul.id = 'party-ul';
             ul.style.margin = '0';
             ul.style.paddingLeft = '18px';
-            const liYou = document.createElement('li');
-            liYou.innerHTML = '<em>You</em>';
-            ul.appendChild(liYou);
-            party.forEach((m) => {
-              const li = document.createElement('li');
-              li.textContent = m.display_name;
-              ul.appendChild(li);
-            });
             list.innerHTML = '';
             list.appendChild(ul);
           }
         }
       } catch (_) {}
     };
+
+    // Lobby polling for readiness/state
+    (function initLobbyPolling() {
+      const readyBtn = document.getElementById('ready-toggle');
+      const goTopBtn = document.getElementById('go-top-btn');
+      const lobbyStatus = document.getElementById('lobby-status');
+      let isReady = false;
+      let pollTimer = null;
+
+      function renderReadyPills(party) {
+        const pills = document.querySelectorAll('.ready-pill');
+        pills.forEach((pill) => {
+          const attr = pill.getAttribute('data-user');
+          const uid = attr === 'self' ? window.__SESSION_USER_ID__ : attr;
+          const matching = party.find(p => String(p.user_id) === String(uid));
+          const ready = matching ? !!matching.ready : false;
+          pill.textContent = ready ? '✓ ready' : 'not ready';
+          pill.style.fontSize = '90%';
+          pill.style.color = ready ? '#0a0' : '#a00';
+          pill.style.marginLeft = '6px';
+        });
+      }
+
+      function renderParty(party) {
+        let ul = document.getElementById('party-ul');
+        if (party.length <= 1) { if (ul) ul.innerHTML=''; return; }
+        if (!ul) {
+          const list = document.getElementById('party-list');
+          if (!list) return;
+          ul = document.createElement('ul');
+          ul.id = 'party-ul';
+          ul.style.margin = '0';
+          ul.style.paddingLeft = '18px';
+          list.innerHTML = '';
+          list.appendChild(ul);
+        }
+        ul.innerHTML = '';
+        party.forEach((m) => {
+          const li = document.createElement('li');
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = m.display_name + ' ';
+          li.appendChild(nameSpan);
+          const pill = document.createElement('span');
+          pill.className = 'ready-pill';
+          pill.setAttribute('data-user', String(m.user_id));
+          li.appendChild(pill);
+          const myId = window.__SESSION_USER_ID__;
+          // Host can kick others
+          if (party.length > 1 && myId && m.user_id !== myId) {
+            const hostId = party[0]?.user_id;
+            if (myId === hostId) {
+              const btn = document.createElement('button');
+              btn.textContent = '−';
+              btn.title = 'Remove from lobby';
+              btn.style.marginLeft = '8px';
+              btn.style.padding = '0 6px';
+              btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                if (!confirm(`Remove ${m.display_name} from the lobby?`)) return;
+                try {
+                  const r = await fetch('/api/lobby/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked', user_id: m.user_id }) });
+                  const j = await r.json().catch(() => null);
+                  if (j && j.ok) fetchStatus();
+                } catch (_) {}
+              });
+              li.appendChild(btn);
+            }
+          }
+          // Invitees can leave
+          if (party.length > 1 && myId && m.user_id === myId && myId !== party[0]?.user_id) {
+            const leaveBtn = document.createElement('button');
+            leaveBtn.textContent = 'Leave';
+            leaveBtn.style.marginLeft = '8px';
+            leaveBtn.addEventListener('click', async (e) => {
+              e.preventDefault();
+              try {
+                const r = await fetch('/api/lobby/leave', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked' }) });
+                const j = await r.json().catch(() => null);
+                if (j && j.ok) {
+                  location.href = '/ranked';
+                }
+              } catch (_) {}
+            });
+            li.appendChild(leaveBtn);
+          }
+          ul.appendChild(li);
+        });
+      }
+
+      async function fetchStatus() {
+        try {
+          const r = await fetch('/api/lobby/status?mode=ranked');
+          const j = await r.json().catch(() => null);
+          if (!j || !j.ok) return;
+          const party = Array.isArray(j.party) ? j.party : [];
+          // Hide ready UI when solo
+          const controls = document.getElementById('lobby-controls');
+          if (controls) controls.style.display = (party.length <= 1) ? 'none' : 'flex';
+          renderParty(party);
+          if (party.length > 1) renderReadyPills(party);
+          if (lobbyStatus) lobbyStatus.textContent = (party.length <= 1) ? '' : (j.can_start ? 'All ready.' : 'Waiting for players…');
+          const inviteMsg = document.getElementById('invite-msg');
+          if (inviteMsg && party.length > 1) inviteMsg.textContent = '';
+          if (goTopBtn && !goTopBtn.hasAttribute('disabled')) {
+            const disable = !(j && j.can_start);
+            goTopBtn.disabled = disable;
+            goTopBtn.style.opacity = disable ? '0.6' : '';
+            goTopBtn.style.cursor = disable ? 'not-allowed' : '';
+            goTopBtn.title = disable ? 'All players must be ready' : '';
+          }
+          // If a session exists for this lobby, redirect everyone to it
+          const currentSessionInput = document.querySelector('input[name="session_id"]');
+          const currentSessionId = currentSessionInput ? Number(currentSessionInput.value) : null;
+          if (j.active_session_id && (!currentSessionId || Number(j.active_session_id) !== currentSessionId)) {
+            location.href = '/ranked?session_id=' + String(j.active_session_id);
+            return;
+          }
+        } catch (_) {}
+        finally {
+          pollTimer = setTimeout(fetchStatus, 3000);
+        }
+      }
+
+      async function setReadyState(flag) {
+        try {
+          await fetch('/api/lobby/ready', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked', ready: !!flag }) });
+        } catch (_) {}
+      }
+
+      // Ensure default is unready on load and when returning via back/forward cache
+      setReadyState(false);
+      window.addEventListener('pageshow', () => { setReadyState(false); });
+
+      if (readyBtn) {
+        readyBtn.addEventListener('click', async () => {
+          isReady = !isReady;
+          readyBtn.textContent = isReady ? 'Unready' : 'Ready';
+          setReadyState(isReady);
+          fetchStatus();
+        });
+      }
+      // Intercept top Find Match to use lobby start in party
+      if (goTopBtn && !goTopBtn.hasAttribute('disabled')) {
+        const form = goTopBtn.closest('form');
+        if (form) {
+          form.addEventListener('submit', async (e) => {
+            try {
+              const r = await fetch('/api/lobby/status?mode=ranked');
+              const j = await r.json().catch(() => null);
+              const partyLen = (j && j.ok && Array.isArray(j.party)) ? j.party.length : 1;
+              if (partyLen > 1) {
+                e.preventDefault();
+                const rs = await fetch('/api/lobby/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked' }) });
+                const sr = await rs.json().catch(() => null);
+                if (sr && sr.ok && sr.redirect_url) {
+                  location.href = sr.redirect_url;
+                }
+                return;
+              }
+            } catch (_) { /* fall through to normal submit */ }
+          });
+        }
+      }
+      fetchStatus();
+    })();
 
     const inviteAddBtn = document.getElementById('invite-add-btn');
     const inviteMsg = document.getElementById('invite-msg');
@@ -178,10 +359,13 @@
         const code = prompt('Invite player by user ID code (e.g., ABC234):');
         if (!code) return;
         try {
-          const r = await fetch('/api/invites/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_code: code }) });
+          const r = await fetch('/api/invites/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_code: code, mode: 'ranked' }) });
           const j = await r.json().catch(() => null);
           if (j && j.ok) {
-            if (inviteMsg) inviteMsg.textContent = 'Invite sent. Expires in 5 minutes.';
+            if (inviteMsg) {
+              inviteMsg.textContent = 'Invite sent. Expires in 5 minutes.';
+              setTimeout(() => { inviteMsg.textContent = ''; }, 5000);
+            }
           } else {
             const err = j && j.error ? j.error : 'failed';
             if (inviteMsg) inviteMsg.textContent = 'Invite ' + err + '.';
@@ -200,6 +384,7 @@
     if (solutionModalClose && solutionModal) {
       solutionModalClose.addEventListener('click', () => {
         solutionModal.style.display = 'none';
+        try { window.__SESSION_POLL_PAUSED__ = false; } catch (_) {}
         // After viewing solution, return to ranked home so player can find a new match
         location.href = '/ranked';
       });
@@ -279,7 +464,7 @@
                 solutionSteps.innerHTML = '<p>No steps available.</p>';
               }
             }
-            if (solutionModal) solutionModal.style.display = 'block';
+            if (solutionModal) { window.__SESSION_POLL_PAUSED__ = true; solutionModal.style.display = 'block'; }
           } else {
             alert('Failed to give up.');
           }

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS invites (
     inviter_id INTEGER NOT NULL,
     invitee_id INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | expired | cancelled
+    mode TEXT NOT NULL DEFAULT 'quick', -- quick | ranked (source lobby)
     token TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -86,6 +87,16 @@ CREATE TABLE IF NOT EXISTS game_session_members (
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON game_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_inviter ON game_sessions(inviter_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_mode ON game_sessions(mode);
+-- Lobby ready state keyed by (inviter_id, mode, user_id)
+CREATE TABLE IF NOT EXISTS lobby_ready (
+    inviter_id INTEGER NOT NULL,
+    mode TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    ready INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(inviter_id, mode, user_id),
+    FOREIGN KEY(inviter_id) REFERENCES users(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);
 """
 
 
@@ -126,6 +137,7 @@ def ensure_migrations(conn: sqlite3.Connection) -> None:
             inviter_id INTEGER NOT NULL,
             invitee_id INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
+            mode TEXT NOT NULL DEFAULT 'quick',
             token TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
@@ -136,6 +148,11 @@ def ensure_migrations(conn: sqlite3.Connection) -> None:
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_invitee_status ON invites(invitee_id, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_invites_expires_at ON invites(expires_at)")
+    # Add mode column to invites if missing
+    cur.execute("PRAGMA table_info(invites)")
+    cols_invites = [r[1] for r in cur.fetchall()]
+    if "mode" not in cols_invites:
+        cur.execute("ALTER TABLE invites ADD COLUMN mode TEXT NOT NULL DEFAULT 'quick'")
     # Ensure sessions tables exist
     cur.execute(
         """
@@ -167,6 +184,20 @@ def ensure_migrations(conn: sqlite3.Connection) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON game_sessions(status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_inviter ON game_sessions(inviter_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_mode ON game_sessions(mode)")
+    # Ensure lobby_ready table exists
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lobby_ready (
+            inviter_id INTEGER NOT NULL,
+            mode TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            ready INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(inviter_id, mode, user_id),
+            FOREIGN KEY(inviter_id) REFERENCES users(id),
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
     # Add session_id column to game_results if missing
     cur.execute("PRAGMA table_info(game_results)")
     cols_gr = [r[1] for r in cur.fetchall()]
@@ -417,6 +448,7 @@ def create_invite(
     conn: sqlite3.Connection,
     inviter_id: int,
     invitee_id: int,
+    mode: str,
     token: str,
     expires_at_iso: str,
 ) -> int:
@@ -424,10 +456,10 @@ def create_invite(
     cur = conn.cursor()
     cur.execute(
         """
-        INSERT INTO invites (inviter_id, invitee_id, status, token, created_at, expires_at)
-        VALUES (?, ?, 'pending', ?, ?, ?)
+        INSERT INTO invites (inviter_id, invitee_id, status, mode, token, created_at, expires_at)
+        VALUES (?, ?, 'pending', ?, ?, ?, ?)
         """,
-        (inviter_id, invitee_id, token, now, expires_at_iso),
+        (inviter_id, invitee_id, mode, token, now, expires_at_iso),
     )
     conn.commit()
     return cur.lastrowid
@@ -442,13 +474,13 @@ def expire_old_invites(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def get_pending_invites_for_user(conn: sqlite3.Connection, invitee_id: int) -> List[Tuple[int, int, str, str, str]]:
-    """Return list of (id, inviter_id, inviter_display, created_at, expires_at) for pending, non-expired invites."""
+def get_pending_invites_for_user(conn: sqlite3.Connection, invitee_id: int) -> List[Tuple[int, int, str, str, str, str]]:
+    """Return list of (id, inviter_id, inviter_display, mode, created_at, expires_at) for pending, non-expired invites."""
     expire_old_invites(conn)
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT i.id, u.id AS inviter_id, u.display_name, i.created_at, i.expires_at
+        SELECT i.id, u.id AS inviter_id, u.display_name, i.mode, i.created_at, i.expires_at
         FROM invites i
         JOIN users u ON u.id = i.inviter_id
         WHERE i.invitee_id = ? AND i.status = 'pending' AND i.expires_at > ?
@@ -478,8 +510,8 @@ def accept_invite(conn: sqlite3.Connection, invite_id: int, invitee_id: int) -> 
     return True
 
 
-def get_party_for_inviter(conn: sqlite3.Connection, inviter_id: int) -> List[Tuple[int, str]]:
-    """Return accepted invitees (user_id, display_name) for inviter where invite not expired yet."""
+def get_party_for_inviter(conn: sqlite3.Connection, inviter_id: int, mode: str = 'quick') -> List[Tuple[int, str]]:
+    """Return accepted invitees (user_id, display_name) for inviter in a given mode where invite not expired yet."""
     expire_old_invites(conn)
     cur = conn.cursor()
     cur.execute(
@@ -487,13 +519,132 @@ def get_party_for_inviter(conn: sqlite3.Connection, inviter_id: int) -> List[Tup
         SELECT u.id, u.display_name
         FROM invites i
         JOIN users u ON u.id = i.invitee_id
-        WHERE i.inviter_id = ? AND i.status = 'accepted' AND i.expires_at > ?
+        WHERE i.inviter_id = ? AND i.mode = ? AND i.status = 'accepted' AND i.expires_at > ?
         ORDER BY i.created_at ASC, i.id ASC
         """,
-        (inviter_id, datetime.utcnow().isoformat()),
+        (inviter_id, mode, datetime.utcnow().isoformat()),
     )
     rows = cur.fetchall()
     return [(int(r[0]), str(r[1])) for r in rows]
+
+
+def get_latest_inviter_for_invitee_and_mode(
+    conn: sqlite3.Connection, invitee_id: int, mode: str
+) -> Optional[int]:
+    """Return inviter_id for the most recent accepted, non-expired invite for this invitee in the given mode."""
+    expire_old_invites(conn)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT inviter_id
+        FROM invites
+        WHERE invitee_id = ? AND mode = ? AND status = 'accepted' AND expires_at > ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (invitee_id, mode, datetime.utcnow().isoformat()),
+    )
+    row = cur.fetchone()
+    return int(row[0]) if row else None
+
+
+def lobby_set_ready(
+    conn: sqlite3.Connection, inviter_id: int, mode: str, user_id: int, ready: bool
+) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO lobby_ready (inviter_id, mode, user_id, ready)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(inviter_id, mode, user_id)
+        DO UPDATE SET ready=excluded.ready
+        """,
+        (inviter_id, mode, user_id, 1 if ready else 0),
+    )
+    conn.commit()
+
+
+def lobby_get_ready_map(
+    conn: sqlite3.Connection, inviter_id: int, mode: str
+) -> dict:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT user_id, ready FROM lobby_ready WHERE inviter_id = ? AND mode = ?
+        """,
+        (inviter_id, mode),
+    )
+    rows = cur.fetchall()
+    return {int(r[0]): bool(r[1]) for r in rows}
+
+
+def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> Optional[Tuple[int, str]]:
+    cur = conn.cursor()
+    cur.execute("SELECT id, display_name FROM users WHERE id = ?", (user_id,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return int(row[0]), str(row[1])
+
+
+def get_recent_accepted_invites_for_inviter(
+    conn: sqlite3.Connection, inviter_id: int, limit: int = 5
+) -> List[Tuple[int, int, str]]:
+    """Return recent accepted invites for this inviter: (invite_id, invitee_id, mode).
+
+    Uses accepted status and orders by id desc, bounded by non-expired invites.
+    """
+    expire_old_invites(conn)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT i.id, i.invitee_id, i.mode
+        FROM invites i
+        WHERE i.inviter_id = ? AND i.status = 'accepted' AND i.expires_at > ?
+        ORDER BY i.id DESC
+        LIMIT ?
+        """,
+        (inviter_id, datetime.utcnow().isoformat(), limit),
+    )
+    rows = cur.fetchall()
+    return [(int(r[0]), int(r[1]), str(r[2])) for r in rows]
+
+
+def cancel_accepted_invite(
+    conn: sqlite3.Connection, inviter_id: int, invitee_id: int, mode: str
+) -> bool:
+    """Cancel an accepted invite (kick/leave) and clear readiness for that invitee.
+
+    Returns True if a row was updated, False otherwise.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE invites
+        SET status = 'cancelled'
+        WHERE inviter_id = ? AND invitee_id = ? AND mode = ? AND status = 'accepted'
+        """,
+        (inviter_id, invitee_id, mode),
+    )
+    changed = cur.rowcount > 0
+    # Clear ready flag for the user in this lobby
+    cur.execute(
+        "DELETE FROM lobby_ready WHERE inviter_id = ? AND mode = ? AND user_id = ?",
+        (inviter_id, mode, invitee_id),
+    )
+    conn.commit()
+    return changed
+
+
+def lobby_clear_all_ready(
+    conn: sqlite3.Connection, inviter_id: int, mode: str
+) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM lobby_ready WHERE inviter_id = ? AND mode = ?",
+        (inviter_id, mode),
+    )
+    conn.commit()
 
 
 def create_game_session(
