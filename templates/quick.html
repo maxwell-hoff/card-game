@@ -213,9 +213,18 @@
       }
 
       function renderParty(party) {
-        const ul = document.getElementById('party-ul');
+        let ul = document.getElementById('party-ul');
         if (party.length <= 1) { if (ul) ul.innerHTML = ''; return; }
-        if (!ul) return;
+        if (!ul) {
+          const list = document.getElementById('party-list');
+          if (!list) return;
+          ul = document.createElement('ul');
+          ul.id = 'party-ul';
+          ul.style.margin = '0';
+          ul.style.paddingLeft = '18px';
+          list.innerHTML = '';
+          list.appendChild(ul);
+        }
         ul.innerHTML = '';
         party.forEach((m) => {
           const li = document.createElement('li');
