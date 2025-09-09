@@ -46,6 +46,7 @@ from app.db import (
     lobby_get_ready_map,
     get_active_quick_sessions_for_user,
     cancel_accepted_invite,
+    lobby_clear_all_ready,
 )
  
 def inviter_display_name(conn, inviter_id: int) -> str:
@@ -325,11 +326,17 @@ def create_app(db_path: str) -> Flask:
             update_session_result(conn, sid, solved=solved_flag, seconds=seconds_val, user_id=user_id)
             if solved_flag:
                 complete_session(conn, sid)
-            # Decide where to redirect based on session mode
+            # After completion or submit, always return to lobby and clear readiness
             cur = conn.cursor()
-            cur.execute("SELECT mode FROM game_sessions WHERE id = ?", (sid,))
+            cur.execute("SELECT inviter_id, mode FROM game_sessions WHERE id = ?", (sid,))
             r = cur.fetchone()
-            mode = r[0] if r else 'quick'
+            inviter_id = int(r[0]) if r else None
+            mode = str(r[1]) if r and r[1] else 'quick'
+            if inviter_id:
+                try:
+                    lobby_clear_all_ready(conn, inviter_id, mode)
+                except Exception:
+                    pass
             if mode == 'ranked':
                 return redirect(url_for("ranked"))
         else:
@@ -365,6 +372,11 @@ def create_app(db_path: str) -> Flask:
         # Mark loss and complete
         update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
         complete_session(conn, sid)
+        # Clear lobby readiness so next time starts from unready
+        try:
+            lobby_clear_all_ready(conn, inviter_id, 'quick')
+        except Exception:
+            pass
         # Fetch solution steps and initial layout
         steps: list = []
         layout: Optional[dict] = None
@@ -684,6 +696,11 @@ def create_app(db_path: str) -> Flask:
         # Mark loss and complete
         update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
         complete_session(conn, sid)
+        # Clear lobby readiness for ranked lobby
+        try:
+            lobby_clear_all_ready(conn, inviter_id, 'ranked')
+        except Exception:
+            pass
         # Fetch solution steps and initial layout
         steps: list = []
         layout: Optional[dict] = None

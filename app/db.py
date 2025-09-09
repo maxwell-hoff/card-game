@@ -636,6 +636,17 @@ def cancel_accepted_invite(
     return changed
 
 
+def lobby_clear_all_ready(
+    conn: sqlite3.Connection, inviter_id: int, mode: str
+) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM lobby_ready WHERE inviter_id = ? AND mode = ?",
+        (inviter_id, mode),
+    )
+    conn.commit()
+
+
 def create_game_session(
     conn: sqlite3.Connection,
     inviter_id: int,
