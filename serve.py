@@ -248,9 +248,9 @@ def create_app(db_path: str) -> Flask:
                 active_sessions=active,
             )
 
-        # If arriving via lobby start, attempt to reuse existing host session
+        # If arriving via lobby start, attempt to reuse existing host session only when not solo
         existing = get_active_quick_sessions_for_user(conn, host_id) if host_id else []
-        if existing:
+        if existing and players_filter > 1:
             sid, pid, exp_turns, _started_at = existing[0]
             return redirect(url_for("quick", session_id=sid))
 

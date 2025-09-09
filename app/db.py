@@ -466,12 +466,18 @@ def create_invite(
 
 
 def expire_old_invites(conn: sqlite3.Connection) -> None:
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE invites SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?",
-        (datetime.utcnow().isoformat(),),
-    )
-    conn.commit()
+    try:
+        cur = conn.cursor()
+        # Let SQLite compute current time to avoid Python param issues and clock skew
+        cur.execute(
+            "UPDATE invites SET status = 'expired' WHERE status = 'pending' AND expires_at <= datetime('now')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def get_pending_invites_for_user(conn: sqlite3.Connection, invitee_id: int) -> List[Tuple[int, int, str, str, str, str]]:
