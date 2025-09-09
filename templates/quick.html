@@ -150,7 +150,8 @@
           const r = await fetch(`/api/game_session/status?session_id=${sid}`);
           const j = await r.json().catch(() => null);
           if (j && j.ok) {
-            if (j.status === 'completed') {
+            const paused = window.__SESSION_POLL_PAUSED__ === true;
+            if (j.status === 'completed' && !paused) {
               // Return to quick lobby
               location.href = '/quick';
               return;
@@ -383,6 +384,7 @@
     if (quickSolutionModalClose && quickSolutionModal) {
       quickSolutionModalClose.addEventListener('click', () => {
         quickSolutionModal.style.display = 'none';
+        try { window.__SESSION_POLL_PAUSED__ = false; } catch (_) {}
         location.href = '/quick';
       });
     }
@@ -475,7 +477,10 @@
                 quickSolutionSteps.innerHTML = '<p>No steps available.</p>';
               }
             }
-            if (quickSolutionModal) quickSolutionModal.style.display = 'block';
+            if (quickSolutionModal) {
+              window.__SESSION_POLL_PAUSED__ = true;
+              quickSolutionModal.style.display = 'block';
+            }
           } else {
             alert('Failed to give up.');
           }

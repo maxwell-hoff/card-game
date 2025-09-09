@@ -148,7 +148,8 @@
           const r = await fetch(`/api/game_session/status?session_id=${sid}`);
           const j = await r.json().catch(() => null);
           if (j && j.ok) {
-            if (j.status === 'completed') {
+            const paused = window.__SESSION_POLL_PAUSED__ === true;
+            if (j.status === 'completed' && !paused) {
               location.href = '/ranked';
               return;
             }
@@ -374,6 +375,7 @@
     if (solutionModalClose && solutionModal) {
       solutionModalClose.addEventListener('click', () => {
         solutionModal.style.display = 'none';
+        try { window.__SESSION_POLL_PAUSED__ = false; } catch (_) {}
         // After viewing solution, return to ranked home so player can find a new match
         location.href = '/ranked';
       });
@@ -453,7 +455,7 @@
                 solutionSteps.innerHTML = '<p>No steps available.</p>';
               }
             }
-            if (solutionModal) solutionModal.style.display = 'block';
+            if (solutionModal) { window.__SESSION_POLL_PAUSED__ = true; solutionModal.style.display = 'block'; }
           } else {
             alert('Failed to give up.');
           }
