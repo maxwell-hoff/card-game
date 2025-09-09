@@ -45,6 +45,7 @@ from app.db import (
     lobby_set_ready,
     lobby_get_ready_map,
     get_active_quick_sessions_for_user,
+    cancel_accepted_invite,
 )
  
 def inviter_display_name(conn, inviter_id: int) -> str:
@@ -902,7 +903,7 @@ def create_app(db_path: str) -> Flask:
         mode = (data.get("mode") or "quick").strip().lower()
         if mode not in ("quick", "ranked"):
             mode = "quick"
-        ready_flag = bool(data.get("ready", False))
+        ready_flag = True if data.get("ready") is True else False
         user_id = int(current.get("id"))
         inviter_id = user_id
         latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, user_id, mode)
@@ -910,6 +911,45 @@ def create_app(db_path: str) -> Flask:
             inviter_id = latest_inviter
         lobby_set_ready(conn, inviter_id, mode, user_id, ready_flag)
         return jsonify({"ok": True})
+
+    @app.route("/api/lobby/kick", methods=["POST"])
+    def api_lobby_kick():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        mode = (data.get("mode") or "quick").strip().lower()
+        if mode not in ("quick", "ranked"):
+            mode = "quick"
+        target_user_id = data.get("user_id")
+        try:
+            target_user_id = int(target_user_id)
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_user_id"}), 400
+        inviter_id = int(current.get("id"))
+        # Only host can kick; verify target is in party
+        party_rows = get_party_for_inviter(conn, inviter_id, mode=mode)
+        party_ids = {uid for (uid, _name) in party_rows}
+        if target_user_id not in party_ids:
+            return jsonify({"ok": False, "error": "not_in_party"}), 400
+        ok = cancel_accepted_invite(conn, inviter_id, target_user_id, mode)
+        return jsonify({"ok": bool(ok)})
+
+    @app.route("/api/lobby/leave", methods=["POST"])
+    def api_lobby_leave():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        mode = (data.get("mode") or "quick").strip().lower()
+        if mode not in ("quick", "ranked"):
+            mode = "quick"
+        user_id = int(current.get("id"))
+        inviter_id = get_latest_inviter_for_invitee_and_mode(conn, user_id, mode)
+        if not inviter_id:
+            return jsonify({"ok": False, "error": "no_lobby"}), 400
+        ok = cancel_accepted_invite(conn, inviter_id, user_id, mode)
+        return jsonify({"ok": bool(ok)})
 
     @app.route("/api/lobby/start", methods=["POST"])
     def api_lobby_start():

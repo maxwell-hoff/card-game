@@ -610,6 +610,32 @@ def get_recent_accepted_invites_for_inviter(
     return [(int(r[0]), int(r[1]), str(r[2])) for r in rows]
 
 
+def cancel_accepted_invite(
+    conn: sqlite3.Connection, inviter_id: int, invitee_id: int, mode: str
+) -> bool:
+    """Cancel an accepted invite (kick/leave) and clear readiness for that invitee.
+
+    Returns True if a row was updated, False otherwise.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE invites
+        SET status = 'cancelled'
+        WHERE inviter_id = ? AND invitee_id = ? AND mode = ? AND status = 'accepted'
+        """,
+        (inviter_id, invitee_id, mode),
+    )
+    changed = cur.rowcount > 0
+    # Clear ready flag for the user in this lobby
+    cur.execute(
+        "DELETE FROM lobby_ready WHERE inviter_id = ? AND mode = ? AND user_id = ?",
+        (inviter_id, mode, invitee_id),
+    )
+    conn.commit()
+    return changed
+
+
 def create_game_session(
     conn: sqlite3.Connection,
     inviter_id: int,

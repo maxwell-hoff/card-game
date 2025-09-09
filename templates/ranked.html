@@ -190,7 +190,52 @@
         ul.innerHTML = '';
         party.forEach((m) => {
           const li = document.createElement('li');
-          li.innerHTML = m.display_name + ' <span class="ready-pill" data-user="' + String(m.user_id) + '"></span>';
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = m.display_name + ' ';
+          li.appendChild(nameSpan);
+          const pill = document.createElement('span');
+          pill.className = 'ready-pill';
+          pill.setAttribute('data-user', String(m.user_id));
+          li.appendChild(pill);
+          const myId = window.__SESSION_USER_ID__;
+          // Host can kick others
+          if (party.length > 1 && myId && m.user_id !== myId) {
+            const hostId = party[0]?.user_id;
+            if (myId === hostId) {
+              const btn = document.createElement('button');
+              btn.textContent = '−';
+              btn.title = 'Remove from lobby';
+              btn.style.marginLeft = '8px';
+              btn.style.padding = '0 6px';
+              btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                if (!confirm(`Remove ${m.display_name} from the lobby?`)) return;
+                try {
+                  const r = await fetch('/api/lobby/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked', user_id: m.user_id }) });
+                  const j = await r.json().catch(() => null);
+                  if (j && j.ok) fetchStatus();
+                } catch (_) {}
+              });
+              li.appendChild(btn);
+            }
+          }
+          // Invitees can leave
+          if (party.length > 1 && myId && m.user_id === myId && myId !== party[0]?.user_id) {
+            const leaveBtn = document.createElement('button');
+            leaveBtn.textContent = 'Leave';
+            leaveBtn.style.marginLeft = '8px';
+            leaveBtn.addEventListener('click', async (e) => {
+              e.preventDefault();
+              try {
+                const r = await fetch('/api/lobby/leave', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked' }) });
+                const j = await r.json().catch(() => null);
+                if (j && j.ok) {
+                  location.href = '/ranked';
+                }
+              } catch (_) {}
+            });
+            li.appendChild(leaveBtn);
+          }
           ul.appendChild(li);
         });
       }
@@ -220,13 +265,21 @@
         }
       }
 
+      async function setReadyState(flag) {
+        try {
+          await fetch('/api/lobby/ready', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked', ready: !!flag }) });
+        } catch (_) {}
+      }
+
+      // Ensure default is unready on load and when returning via back/forward cache
+      setReadyState(false);
+      window.addEventListener('pageshow', () => { setReadyState(false); });
+
       if (readyBtn) {
         readyBtn.addEventListener('click', async () => {
           isReady = !isReady;
           readyBtn.textContent = isReady ? 'Unready' : 'Ready';
-          try {
-            await fetch('/api/lobby/ready', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked', ready: isReady }) });
-          } catch (_) {}
+          setReadyState(isReady);
           fetchStatus();
         });
       }
