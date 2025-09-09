@@ -10,7 +10,7 @@
         <label for="turns">Turns:</label>
         <input id="turns" name="turns" type="number" min="1" value="{{ turns_filter if turns_filter is not none else '' }}" placeholder="Random" />
         <input type="hidden" name="go" value="1" />
-        <button type="submit">Go</button>
+        <button id="go-top-btn" type="submit">Go</button>
       </form>
 
       <div style="margin-top:12px; padding:8px; background:#f7f7f7; border:1px solid #ddd; border-radius:4px; max-width:520px;">
@@ -31,7 +31,6 @@
         </div>
         <div id="lobby-controls" style="margin-top:8px; display:flex; gap:8px; align-items:center;">
           <button id="ready-toggle" style="padding:4px 8px;">Ready</button>
-          <button id="start-btn" style="padding:4px 8px; display:none;">Go</button>
           <span id="lobby-status" style="color:#555;"></span>
         </div>
         <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
@@ -169,7 +168,7 @@
     // Lobby polling for readiness/state
     (function initLobbyPolling() {
       const readyBtn = document.getElementById('ready-toggle');
-      const startBtn = document.getElementById('start-btn');
+      const goTopBtn = document.getElementById('go-top-btn');
       const lobbyStatus = document.getElementById('lobby-status');
       let isReady = false;
       let pollTimer = null;
@@ -211,7 +210,14 @@
           renderParty(party);
           renderReadyPills(party);
           if (lobbyStatus) lobbyStatus.textContent = (party.length <= 1) ? '' : (j.can_start ? 'All ready.' : 'Waiting for players…');
-          if (startBtn) startBtn.style.display = j.can_start ? 'inline-block' : 'none';
+          // Toggle top Go button enabled state
+          if (goTopBtn) {
+            const disable = !(j && j.can_start);
+            goTopBtn.disabled = disable;
+            goTopBtn.style.opacity = disable ? '0.6' : '';
+            goTopBtn.style.cursor = disable ? 'not-allowed' : '';
+            goTopBtn.title = disable ? 'All players must be ready' : '';
+          }
         } catch (_) {}
         finally {
           pollTimer = setTimeout(fetchStatus, 3000);
@@ -228,20 +234,28 @@
           fetchStatus();
         });
       }
-      if (startBtn) {
-        startBtn.addEventListener('click', async () => {
-          try {
-            const r = await fetch('/api/lobby/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'quick' }) });
-            const j = await r.json().catch(() => null);
-            if (j && j.ok && j.redirect_url) {
-              location.href = j.redirect_url;
-            } else {
-              alert('Not all players are ready.');
-            }
-          } catch (_) {
-            alert('Failed to start.');
-          }
-        });
+      // Intercept top Go submit to start via lobby API when multi-player
+      if (goTopBtn) {
+        const form = goTopBtn.closest('form');
+        if (form) {
+          form.addEventListener('submit', async (e) => {
+            // Attempt to use lobby/start to unify session when in a party
+            try {
+              const r = await fetch('/api/lobby/status?mode=quick');
+              const j = await r.json().catch(() => null);
+              const partyLen = (j && j.ok && Array.isArray(j.party)) ? j.party.length : 1;
+              if (partyLen > 1) {
+                e.preventDefault();
+                const rs = await fetch('/api/lobby/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'quick' }) });
+                const sr = await rs.json().catch(() => null);
+                if (sr && sr.ok && sr.redirect_url) {
+                  location.href = sr.redirect_url;
+                }
+                return;
+              }
+            } catch (_) { /* fall through to normal submit */ }
+          });
+        }
       }
       fetchStatus();
     })();
