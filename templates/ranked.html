@@ -26,7 +26,7 @@
           </div>
         </div>
         <div id="party-list" style="margin-top:8px;">
-          {% if party and party|length > 0 %}
+          {% if party and party|length > 1 %}
             <ul id="party-ul" style="margin:0; padding-left:18px;"></ul>
           {% endif %}
         </div>
@@ -171,7 +171,8 @@
         const list = document.getElementById('party-list');
         if (playersCountEl) playersCountEl.textContent = String(j.players_count || (1 + party.length));
         if (list) {
-          if (party.length === 0) {
+          if (party.length <= 1) {
+            list.innerHTML = '';
           } else {
             const ul = document.createElement('ul');
             ul.id = 'party-ul';
@@ -208,6 +209,7 @@
 
       function renderParty(party) {
         const ul = document.getElementById('party-ul');
+        if (party.length <= 1) { if (ul) ul.innerHTML=''; return; }
         if (!ul) return;
         ul.innerHTML = '';
         party.forEach((m) => {
@@ -272,8 +274,10 @@
           const controls = document.getElementById('lobby-controls');
           if (controls) controls.style.display = (party.length <= 1) ? 'none' : 'flex';
           renderParty(party);
-          renderReadyPills(party);
+          if (party.length > 1) renderReadyPills(party);
           if (lobbyStatus) lobbyStatus.textContent = (party.length <= 1) ? '' : (j.can_start ? 'All ready.' : 'Waiting for players…');
+          const inviteMsg = document.getElementById('invite-msg');
+          if (inviteMsg && party.length > 1) inviteMsg.textContent = '';
           if (goTopBtn && !goTopBtn.hasAttribute('disabled')) {
             const disable = !(j && j.can_start);
             goTopBtn.disabled = disable;
