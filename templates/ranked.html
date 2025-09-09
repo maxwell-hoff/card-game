@@ -259,6 +259,13 @@
             goTopBtn.style.cursor = disable ? 'not-allowed' : '';
             goTopBtn.title = disable ? 'All players must be ready' : '';
           }
+          // If a session exists for this lobby, redirect everyone to it
+          const currentSessionInput = document.querySelector('input[name="session_id"]');
+          const currentSessionId = currentSessionInput ? Number(currentSessionInput.value) : null;
+          if (j.active_session_id && (!currentSessionId || Number(j.active_session_id) !== currentSessionId)) {
+            location.href = '/ranked?session_id=' + String(j.active_session_id);
+            return;
+          }
         } catch (_) {}
         finally {
           pollTimer = setTimeout(fetchStatus, 3000);
