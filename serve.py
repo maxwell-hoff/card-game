@@ -221,6 +221,7 @@ def create_app(db_path: str) -> Flask:
         # Build unified lobby: include host in the local party list for display, but invited count excludes host
         party = [{"user_id": host_id, "display_name": inviter_display_name(conn, host_id)}] + [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         turns_q = request.args.get("turns")
+        players_q = request.args.get("players")
         requested = request.args.get("go") == "1"
         session_q = request.args.get("session_id")
         try:
@@ -230,9 +231,16 @@ def create_app(db_path: str) -> Flask:
         if turns_filter is not None and turns_filter < 1:
             turns_filter = None
 
-        # Determine total players for puzzle selection (host + accepted invitees)
+        # Determine total players for puzzle selection (host + accepted invitees), allow override via query
         invited_count = len(party_rows)
         players_filter = 1 + invited_count
+        if players_q:
+            try:
+                pv = int(players_q)
+                if 1 <= pv <= 5:
+                    players_filter = pv
+            except Exception:
+                pass
         if players_filter < 1:
             players_filter = 1
         if players_filter > 5:
@@ -669,7 +677,7 @@ def create_app(db_path: str) -> Flask:
                 requested=False,
                 require_login=False,
                 party=party,
-                players_count=invited_count,
+                players_count=players_filter,
                 active_sessions=active,
                 elo=elo_value,
             )
@@ -703,7 +711,7 @@ def create_app(db_path: str) -> Flask:
                 requested=True,
                 require_login=False,
                 party=party,
-                players_count=invited_count,
+                players_count=players_filter,
                 active_sessions=[],
                 elo=elo_value,
                 note="No suitable ranked puzzle found. Please generate more puzzles.",
