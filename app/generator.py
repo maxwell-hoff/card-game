@@ -230,17 +230,20 @@ def apply_action(layout: Layout, action: Action) -> None:
         raise ValueError(f"Unknown action: {t}")
 
 
-def random_legal_action(layout: Layout, rng: random.Random, players: int) -> Action:
+def random_legal_action(layout: Layout, rng: random.Random, players: int, expected_player_row: Optional[int] = None) -> Action:
     choices = []
-    for r in range(layout.num_rows):
-        if r == layout.opponent_row_index:
-            continue
+    # Row actions: optionally constrain to expected player's row
+    row_indices = [r for r in range(layout.num_rows) if r != layout.opponent_row_index]
+    if expected_player_row is not None and expected_player_row in row_indices:
+        row_indices = [expected_player_row]
+    for r in row_indices:
         choices.append(Action("row_right", {"row_index": r}))
         choices.append(Action("row_left", {"row_index": r}))
         i = rng.randrange(layout.num_cols)
         j = rng.randrange(layout.num_cols)
         if i != j:
             choices.append(Action("swap", {"row_index": r, "i": i, "j": j}))
+    # Column actions available regardless of player; they don't belong to a specific row
     for c_idx in range(layout.num_cols):
         choices.append(Action("col_down", {"col_index": c_idx}))
         choices.append(Action("col_up", {"col_index": c_idx}))
@@ -255,8 +258,11 @@ def scramble_from_solved(
 ) -> Tuple[Layout, List[Action]]:
     layout = solved.clone()
     actions_taken: List[Action] = []
-    for _ in range(steps):
-        a = random_legal_action(layout, rng, players)
+    for s in range(steps):
+        # Enforce that the solution will alternate players 1..N in order. The solution is the inverse of reversed scramble.
+        expected_solution_index = steps - 1 - s
+        expected_player_row = 1 + (expected_solution_index % players) if players >= 1 else None
+        a = random_legal_action(layout, rng, players, expected_player_row=expected_player_row)
         apply_action(layout, a)
         actions_taken.append(a)
     solution_actions = [inverse_action(a) for a in reversed(actions_taken)]
