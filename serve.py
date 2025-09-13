@@ -60,6 +60,65 @@ import firebase_admin
 from firebase_admin import auth as fb_auth, credentials
 from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token as google_id_token
+def _normalize_layout_and_actions(start_layout_json: str, actions_json: str, opponent_row_index: int):
+    """Return (layout_dict, actions_list, new_opponent_row_index) with rows reordered so that
+    the non-player (opponent) row is at index 0, followed by player rows in ascending original order.
+    Action row indices are remapped to the new ordering. Column actions remain unchanged.
+    """
+    try:
+        layout = json.loads(start_layout_json) if start_layout_json else None
+    except Exception:
+        layout = None
+    try:
+        actions = json.loads(actions_json) if actions_json else None
+    except Exception:
+        actions = None
+    if not layout or not isinstance(layout, dict):
+        return layout, actions if isinstance(actions, list) else [], 0
+    rows = list(layout.get("rows") or [])
+    row_res = list(layout.get("row_reserves") or [])
+    # If invalid or single row, nothing to do
+    if not rows or opponent_row_index is None or opponent_row_index < 0 or opponent_row_index >= len(rows):
+        return layout, (actions if isinstance(actions, list) else []), int(layout.get("opponent_row_index", 0) or 0)
+
+    # Build new index mapping: old -> new
+    num_rows = len(rows)
+    new_order = [opponent_row_index] + [i for i in range(num_rows) if i != opponent_row_index]
+    old_to_new = {old: new for new, old in enumerate(new_order)}
+
+    # Reorder rows and row reserves
+    new_rows = [rows[old] for old in new_order]
+    new_row_res = [row_res[old] for old in new_order] if row_res and len(row_res) == num_rows else row_res
+
+    # Update layout
+    layout_norm = dict(layout)
+    layout_norm["rows"] = new_rows
+    if new_row_res:
+        layout_norm["row_reserves"] = new_row_res
+    layout_norm["opponent_row_index"] = 0
+
+    # Remap actions row_index if present
+    actions_norm = []
+    if isinstance(actions, list):
+        for a in actions:
+            if not isinstance(a, dict):
+                actions_norm.append(a)
+                continue
+            t = a.get("type")
+            p = dict(a.get("params") or {})
+            if t in ("row_left", "row_right", "swap"):
+                if "row_index" in p:
+                    try:
+                        old_idx = int(p.get("row_index"))
+                        p["row_index"] = int(old_to_new.get(old_idx, old_idx))
+                    except Exception:
+                        pass
+            # swap also has i, j unaffected; col_up/down unaffected
+            actions_norm.append({"type": t, "params": p})
+    else:
+        actions_norm = []
+
+    return layout_norm, actions_norm, 0
 
 
 def create_app(db_path: str) -> Flask:
@@ -265,7 +324,7 @@ def create_app(db_path: str) -> Flask:
                 party=party,
                 players_count=players_filter,
             )
-        layout = json.loads(puzzle.start_layout_json)
+        layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(puzzle.start_layout_json, puzzle.actions_json, puzzle.opponent_row_index)
         count, solved = get_puzzle_stats(conn, puzzle.id)
         solve_pct = (solved / count * 100.0) if count else None
         # Create a session for this new puzzle start
@@ -385,11 +444,12 @@ def create_app(db_path: str) -> Flask:
             if puzzle_id:
                 sp = get_puzzle_by_id(conn, int(puzzle_id))
                 if sp:
-                    if sp.actions_json:
-                        actions = json.loads(sp.actions_json)
-                        steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
-                    if sp.start_layout_json:
-                        layout = json.loads(sp.start_layout_json)
+                    # Normalize layout and actions so non-player row is first, then players 1..N
+                    layout_norm, actions_norm, _opp_idx = _normalize_layout_and_actions(
+                        sp.start_layout_json, sp.actions_json, sp.opponent_row_index
+                    )
+                    layout = layout_norm
+                    steps = humanize_actions_dicts(actions_norm) if isinstance(actions_norm, list) else []
         except Exception:
             steps = []
             layout = None
@@ -568,7 +628,7 @@ def create_app(db_path: str) -> Flask:
             sp = get_puzzle_by_id(conn, sess_puzzle_id)
             if not sp:
                 return redirect(url_for("ranked"))
-            layout = json.loads(sp.start_layout_json)
+            layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(sp.start_layout_json, sp.actions_json, sp.opponent_row_index)
             count, solved = get_puzzle_stats(conn, sp.id)
             solve_pct = (solved / count * 100.0) if count else None
             players_count_from_session = max(1, min(5, len(member_rows)))
@@ -648,7 +708,7 @@ def create_app(db_path: str) -> Flask:
                 elo=elo_value,
                 note="No suitable ranked puzzle found. Please generate more puzzles.",
             )
-        layout = json.loads(puzzle.start_layout_json)
+        layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(puzzle.start_layout_json, puzzle.actions_json, puzzle.opponent_row_index)
         count, solved = get_puzzle_stats(conn, puzzle.id)
         solve_pct = (solved / count * 100.0) if count else None
         member_ids = [m[0] for m in party_rows]
@@ -711,11 +771,11 @@ def create_app(db_path: str) -> Flask:
             if puzzle_id:
                 sp = get_puzzle_by_id(conn, int(puzzle_id))
                 if sp:
-                    if sp.actions_json:
-                        actions = json.loads(sp.actions_json)
-                        steps = humanize_actions_dicts(actions) if isinstance(actions, list) else []
-                    if sp.start_layout_json:
-                        layout = json.loads(sp.start_layout_json)
+                    layout_norm, actions_norm, _opp_idx = _normalize_layout_and_actions(
+                        sp.start_layout_json, sp.actions_json, sp.opponent_row_index
+                    )
+                    layout = layout_norm
+                    steps = humanize_actions_dicts(actions_norm) if isinstance(actions_norm, list) else []
         except Exception:
             steps = []
             layout = None

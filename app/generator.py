@@ -192,6 +192,17 @@ def build_solved_layout(
             col_reserves[c_idx][0] = pool.pop().code
             col_reserves[c_idx][1] = pool.pop().code
 
+        # Normalize row ordering so that non-player (opponent) row is at index 0,
+        # followed by player rows in ascending original order. Adjust suite row index accordingly.
+        new_order = [opponent_row_index] + [i for i in range(num_rows) if i != opponent_row_index]
+        old_to_new = {old: new for new, old in enumerate(new_order)}
+        rows = [rows[old] for old in new_order]
+        row_reserves = [row_reserves[old] for old in new_order]
+        # chosen_suit_row_index may be None
+        if chosen_suit_row_index is not None:
+            chosen_suit_row_index = old_to_new.get(chosen_suit_row_index, chosen_suit_row_index)
+        opponent_row_index = 0
+
         layout = Layout(rows=rows, row_reserves=row_reserves, col_reserves=col_reserves, opponent_row_index=opponent_row_index)
         meta = {
             "opponent_row_index": opponent_row_index,
