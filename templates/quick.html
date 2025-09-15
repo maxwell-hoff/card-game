@@ -6,8 +6,10 @@
     <p>You must sign in to play. Use the "Sign in with Google" button in the top-right.</p>
   {% else %}
     {% if not puzzle %}
-      <form method="get" action="/quick">
-        <label for="turns">Turns:</label>
+      <form method="get" action="/quick" id="quick-start-form">
+        <label for="players">Players:</label>
+        <input id="players" name="players" type="number" min="1" max="5" value="{{ players_count }}" />
+        <label for="turns" style="margin-left:8px;">Turns:</label>
         <input id="turns" name="turns" type="number" min="1" value="{{ turns_filter if turns_filter is not none else '' }}" placeholder="Random" />
         <input type="hidden" name="go" value="1" />
         <button id="go-top-btn" type="submit">Go</button>

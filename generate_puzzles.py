@@ -46,6 +46,8 @@ def main() -> None:
                     except RuntimeError:
                         continue
                     scrambled_layout, solution_actions = scramble_from_solved(solved_layout, steps=steps, rng=rng, players=players)
+                    # Ensure row indices in actions start from non-player row at 0 followed by players 1..N
+                    # Since generator normalized opponent_row_index to 0 above, actions produced from scrambling already reference new indices.
                     insert_puzzle(
                         conn=conn,
                         players=players,
