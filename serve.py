@@ -268,6 +268,7 @@ def create_app(db_path: str) -> Flask:
             if not sp:
                 return redirect(url_for("quick"))
             layout = json.loads(sp.start_layout_json)
+            solved_layout = json.loads(sp.solved_layout_json)
             count, solved = get_puzzle_stats(conn, sp.id)
             solve_pct = (solved / count * 100.0) if count else None
             players_count_from_session = max(1, min(5, len(member_rows)))
@@ -283,6 +284,7 @@ def create_app(db_path: str) -> Flask:
                 party=[{"user_id": uid, "display_name": name} for (uid, name) in member_rows if uid != inviter_id],
                 players_count=players_count_from_session,
                 session_id=sess_id,
+                solved_layout=solved_layout,
             )
 
         # If user hasn't clicked Go yet, show setup and any resumable sessions
@@ -333,6 +335,7 @@ def create_app(db_path: str) -> Flask:
                 players_count=players_filter,
             )
         layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(puzzle.start_layout_json, puzzle.actions_json, puzzle.opponent_row_index)
+        solved_layout = json.loads(puzzle.solved_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
         solve_pct = (solved / count * 100.0) if count else None
         # Create a session for this new puzzle start
@@ -356,6 +359,7 @@ def create_app(db_path: str) -> Flask:
             party=party,
             players_count=players_filter,
             session_id=session_id,
+            solved_layout=solved_layout,
         )
 
     @app.route("/puzzle/<int:puzzle_id>")
@@ -637,6 +641,7 @@ def create_app(db_path: str) -> Flask:
             if not sp:
                 return redirect(url_for("ranked"))
             layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(sp.start_layout_json, sp.actions_json, sp.opponent_row_index)
+            solved_layout = json.loads(sp.solved_layout_json)
             count, solved = get_puzzle_stats(conn, sp.id)
             solve_pct = (solved / count * 100.0) if count else None
             players_count_from_session = max(1, min(5, len(member_rows)))
@@ -651,6 +656,7 @@ def create_app(db_path: str) -> Flask:
                 party=[{"user_id": uid, "display_name": name} for (uid, name) in member_rows if uid != inviter_id],
                 players_count=players_count_from_session,
                 session_id=sess_id,
+                solved_layout=solved_layout,
                 elo=elo_value,
             )
 
@@ -717,6 +723,7 @@ def create_app(db_path: str) -> Flask:
                 note="No suitable ranked puzzle found. Please generate more puzzles.",
             )
         layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(puzzle.start_layout_json, puzzle.actions_json, puzzle.opponent_row_index)
+        solved_layout = json.loads(puzzle.solved_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
         solve_pct = (solved / count * 100.0) if count else None
         member_ids = [m[0] for m in party_rows]
@@ -739,6 +746,7 @@ def create_app(db_path: str) -> Flask:
             party=party,
             players_count=invited_count,
             session_id=session_id,
+            solved_layout=solved_layout,
             elo=elo_value,
         )
 
