@@ -145,8 +145,8 @@
       const container = document.getElementById('interactive-play');
       const form = document.getElementById('report-form');
       if (!container || !form) return;
-      const start = JSON.parse('{{ layout | tojson | safe }}');
-      const solved = JSON.parse('{{ solved_layout | tojson | safe }}');
+      const start = JSON.parse('{{ layout | default({}) | tojson | safe }}');
+      const solved = JSON.parse('{{ solved_layout | default({}) | tojson | safe }}');
       if (!start || !start.rows || !start.row_reserves || !start.col_reserves) return;
 
       // Timer into form
@@ -163,7 +163,7 @@
       let current = cloneLayout(start);
       const history = [];
       const opp = current.opponent_row_index;
-      const expectedTurns = Number(JSON.parse('{{ expected_turns | tojson | safe }}'));
+      const expectedTurns = Number(JSON.parse('{{ expected_turns | default(0) | tojson | safe }}'));
 
       function push(type, params){ history.push({type, params}); }
       function inv(act){ const t=act.type; const p=Object.assign({}, act.params||{}); if(t==='row_right')return{type:'row_left',params:p}; if(t==='row_left')return{type:'row_right',params:p}; if(t==='col_down')return{type:'col_up',params:p}; if(t==='col_up')return{type:'col_down',params:p}; if(t==='swap')return{type:'swap',params:p}; return null; }

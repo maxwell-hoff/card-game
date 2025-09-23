@@ -396,8 +396,8 @@
       const form = document.getElementById('report-form');
       if (!container || !form) return;
       // Ensure we have layout and solved_layout injected by server
-      const start = JSON.parse('{{ layout | tojson | safe }}');
-      const solved = JSON.parse('{{ solved_layout | tojson | safe }}');
+      const start = JSON.parse('{{ layout | default({}) | tojson | safe }}');
+      const solved = JSON.parse('{{ solved_layout | default({}) | tojson | safe }}');
       if (!start || !start.rows || !start.row_reserves || !start.col_reserves) return;
 
       // Timer tracking
@@ -432,7 +432,7 @@
       let current = cloneLayout(start);
       const history = [];
       const opp = current.opponent_row_index;
-      const expectedTurns = Number(JSON.parse('{{ expected_turns | tojson | safe }}'));
+      const expectedTurns = Number(JSON.parse('{{ expected_turns | default(0) | tojson | safe }}'));
 
       // Actions
       function pushAction(type, params){ history.push({ type, params }); }
