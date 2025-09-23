@@ -35,9 +35,9 @@
 
   <h2>Get started</h2>
   {% if not session_user %}
-    <p><strong>You must sign in to play.</strong> Use the “Sign in with Google” button in the top-right, then you’ll be sent directly to Quick Play.</p>
+    <p><strong>You must sign in to play.</strong> Use the “Sign in with Google” button in the top-right, then you’ll be sent directly to Play.</p>
   {% else %}
-    <p>You’re signed in as <strong>{{ session_user.display_name }}</strong>. Head to <a href="/quick">Quick Play</a> to start.</p>
+    <p>You’re signed in as <strong>{{ session_user.display_name }}</strong>. Head to <a href="/play">Play</a> to start.</p>
   {% endif %}
 {% endblock %}
 
