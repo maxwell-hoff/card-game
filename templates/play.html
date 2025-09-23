@@ -13,7 +13,7 @@
         <button id="go-top-btn" type="submit" {% if has_active %}disabled title="You have an active game. Complete or give up first." style="opacity:0.6; cursor:not-allowed;"{% endif %}>Play</button>
       </form>
       {% if has_active %}
-        <div style="margin-top:6px; color:#666; font-size: 90%;">Complete your current ranked puzzle to find a new match.</div>
+        <div style="margin-top:6px; color:#666; font-size: 90%;">Complete your current game to start a new one.</div>
       {% endif %}
 
       <div style="margin-top:12px; padding:8px; background:#f7f7f7; border:1px solid #ddd; border-radius:4px; max-width:520px;">
@@ -134,7 +134,7 @@
       </div>
       {% endif %}
     {% elif requested and not puzzle %}
-      <p>No ranked puzzle found. Try again later.</p>
+      <p>No suitable puzzle found. Try again later.</p>
       {% if note %}<p>{{ note }}</p>{% endif %}
     {% endif %}
   {% endif %}
@@ -214,7 +214,7 @@
               cell.addEventListener('click', (e)=>{
                 e.preventDefault();
                 if (!selected) { selected = { r, c }; cell.style.outline='2px solid #06c'; return; }
-                const sr=selected.r, sc=selected.c; const prev=grid.querySelector('[data-sel="1"]'); if (prev) { prev.removeAttribute('data-sel'); prev.style.outline=''; }
+                const sr=selected.r, sc=selected.c; const prev=grid.querySelector('[data-sel=\"1\"]'); if (prev) { prev.removeAttribute('data-sel'); prev.style.outline=''; }
                 selected = null;
                 if (sr===r && sc!==c) { push('swap', { row_index:r, i:sc, j:c }); swapR(r, sc, c); render(); }
               });
@@ -261,7 +261,7 @@
       poll();
       window.addEventListener('beforeunload', () => { if (timer) clearTimeout(timer); });
     })();
-    // Invite helpers reused from quick
+    // Invite helpers
     window.refreshParty = async function refreshParty() {
       try {
         const r = await fetch('/api/party?mode=ranked');
@@ -365,7 +365,7 @@
                 const r = await fetch('/api/lobby/leave', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked' }) });
                 const j = await r.json().catch(() => null);
                 if (j && j.ok) {
-                  location.href = '/ranked';
+                  location.href = '/play';
                 }
               } catch (_) {}
             });
@@ -427,7 +427,7 @@
           fetchStatus();
         });
       }
-      // Intercept top Find Match to use lobby start in party
+      // Intercept top Play to use lobby start in party
       if (goTopBtn && !goTopBtn.hasAttribute('disabled')) {
         const form = goTopBtn.closest('form');
         if (form) {
@@ -486,14 +486,13 @@
       solutionModalClose.addEventListener('click', () => {
         solutionModal.style.display = 'none';
         try { window.__SESSION_POLL_PAUSED__ = false; } catch (_) {}
-        // After viewing solution, return to play home so player can start a new match
         location.href = '/play';
       });
     }
     if (giveUpBtn) {
       giveUpBtn.addEventListener('click', async (e) => {
         e.preventDefault();
-        if (!confirm('Give up and record a loss for this ranked puzzle?')) return;
+        if (!confirm('Give up and record a loss for this game?')) return;
         try {
           const sessionIdInput = document.querySelector('input[name="session_id"]');
           const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
@@ -576,3 +575,5 @@
     }
   </script>
 {% endblock %}
+
+

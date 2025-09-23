@@ -203,142 +203,135 @@ def create_app(db_path: str) -> Flask:
         # Always show landing page, regardless of auth
         return render_template("landing.html")
 
-    @app.route("/quick")
-    def quick():
-        # Require sign-in to play/fetch puzzles
+    @app.route("/play")
+    def play():
+        # Require sign-in
         if not session.get("user"):
             return redirect(url_for("index"))
         current_user = session.get("user")
         inviter_id = current_user.get("id") if current_user else None
-        # Determine lobby host: if this user accepted an invite for quick, use inviter as host
+        # Use ranked lobby/invites to drive party selection
         host_id = inviter_id
         if inviter_id:
-            latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, inviter_id, 'quick')
+            latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, inviter_id, 'ranked')
             if latest_inviter:
                 host_id = latest_inviter
-        # Current party for host: list of accepted invitees (user_id, display_name)
-        party_rows = get_party_for_inviter(conn, host_id, mode='quick') if host_id else []
-        # Build unified lobby: include host in the local party list for display, but invited count excludes host
+        party_rows = get_party_for_inviter(conn, host_id, mode='ranked') if host_id else []
         party = [{"user_id": host_id, "display_name": inviter_display_name(conn, host_id)}] + [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
-        turns_q = request.args.get("turns")
-        players_q = request.args.get("players")
         requested = request.args.get("go") == "1"
         session_q = request.args.get("session_id")
-        try:
-            turns_filter = int(turns_q) if turns_q else None
-        except ValueError:
-            turns_filter = None
-        if turns_filter is not None and turns_filter < 1:
-            turns_filter = None
-
-        # Determine total players for puzzle selection (host + accepted invitees), allow override via query
+        # Players = host + invitees
         invited_count = len(party_rows)
-        players_filter = 1 + invited_count
-        if players_q:
-            try:
-                pv = int(players_q)
-                if 1 <= pv <= 5:
-                    players_filter = pv
-            except Exception:
-                pass
-        if players_filter < 1:
-            players_filter = 1
-        if players_filter > 5:
-            players_filter = 5
+        players_filter = max(1, min(5, 1 + invited_count))
 
-        # If resuming a session by id, load that specific puzzle
+        # ELO across all results? Requirement: ELO applied to all games. We'll compute using ranked history for difficulty, but all games are ranked.
+        ranked_rows = get_user_results_with_puzzle_meta(conn, inviter_id)
+        elo_cfg = EloConfig()
+        elo_value = compute_user_elo(ranked_rows, elo_cfg)
+
+        # Resume specific session
         if session_q:
             try:
                 resume_session_id = int(session_q)
             except Exception:
-                return redirect(url_for("quick"))
+                return redirect(url_for("play"))
             sess = get_session_by_id(conn, resume_session_id)
             if not sess:
-                return redirect(url_for("quick"))
+                return redirect(url_for("play"))
             sess_id, sess_puzzle_id, sess_expected_turns, sess_inviter_id, sess_status, sess_completed_at, sess_started_at = sess
-            # Must be active to resume
             if sess_status != 'active':
-                return redirect(url_for("quick"))
-            # Verify membership
+                return redirect(url_for("play"))
             member_rows = get_session_members_with_names(conn, sess_id)
             member_ids = [m[0] for m in member_rows]
             if inviter_id not in ([sess_inviter_id] + member_ids):
-                return redirect(url_for("quick"))
+                return redirect(url_for("play"))
             sp = get_puzzle_by_id(conn, sess_puzzle_id)
             if not sp:
-                return redirect(url_for("quick"))
-            layout = json.loads(sp.start_layout_json)
+                return redirect(url_for("play"))
+            layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(sp.start_layout_json, sp.actions_json, sp.opponent_row_index)
             solved_layout = json.loads(sp.solved_layout_json)
             count, solved = get_puzzle_stats(conn, sp.id)
             solve_pct = (solved / count * 100.0) if count else None
             players_count_from_session = max(1, min(5, len(member_rows)))
             return render_template(
-                "quick.html",
+                "play.html",
                 puzzle=sp,
                 layout=layout,
                 expected_turns=sp.num_actions,
                 solve_pct=solve_pct,
-                turns_filter=turns_filter,
                 requested=True,
                 require_login=False,
                 party=[{"user_id": uid, "display_name": name} for (uid, name) in member_rows if uid != inviter_id],
                 players_count=players_count_from_session,
                 session_id=sess_id,
                 solved_layout=solved_layout,
+                elo=elo_value,
             )
 
-        # If user hasn't clicked Go yet, show setup and any resumable sessions
+        # If not requested, show lobby and single resumable session if any
         if not requested:
-            # Build active sessions table
+            rows = get_active_sessions_for_user(conn, inviter_id) if inviter_id else []
             active = []
-            if inviter_id:
-                rows = get_active_sessions_for_user(conn, inviter_id)
-                for sid, pid, exp_turns, started_at in rows:
-                    members = get_session_members_with_names(conn, sid)
-                    players_cnt = max(1, min(5, len(members)))
-                    # Other players (exclude self by name/id)
-                    other_names = [name for (uid, name) in members if uid != inviter_id]
-                    active.append({
-                        "session_id": sid,
-                        "puzzle_id": pid,
-                        "players_count": players_cnt,
-                        "others": other_names,
-                        "expected_turns": exp_turns,
-                        "started_at": started_at,
-                    })
+            for sid, pid, exp_turns, started_at in rows:
+                members = get_session_members_with_names(conn, sid)
+                players_cnt = max(1, min(5, len(members)))
+                other_names = [name for (uid, name) in members if uid != inviter_id]
+                active.append({
+                    "session_id": sid,
+                    "puzzle_id": pid,
+                    "players_count": players_cnt,
+                    "others": other_names,
+                    "expected_turns": exp_turns,
+                    "started_at": started_at,
+                })
             return render_template(
-                "quick.html",
+                "play.html",
                 puzzle=None,
-                turns_filter=turns_filter,
                 requested=False,
                 require_login=False,
                 party=party,
                 players_count=players_filter,
                 active_sessions=active,
+                elo=elo_value,
             )
 
-        # If arriving via lobby start, attempt to reuse existing host session only when not solo
-        existing = get_active_quick_sessions_for_user(conn, host_id) if host_id else []
-        if existing and players_filter > 1:
-            sid, pid, exp_turns, _started_at = existing[0]
-            return redirect(url_for("quick", session_id=sid))
+        # Enforce single active session per user
+        existing_rows = get_active_sessions_for_user(conn, host_id) if host_id else []
+        if existing_rows:
+            sid, pid, exp_turns, _started_at = existing_rows[0]
+            return redirect(url_for("play", session_id=int(sid)))
 
-        puzzle = get_random_puzzle_for_filters(conn, players_filter, turns_filter)
+        # Select difficulty from ELO and pick puzzle
+        diff_cfg = RankedDifficultyConfig()
+        level_choice = select_ranked_level(ranked_rows, elo_value, diff_cfg)
+        exclude_ids = get_user_ranked_history_puzzle_ids(conn, inviter_id)
+        puzzle = get_random_puzzle_for_level_and_players_excluding(conn, level_choice, players_filter, exclude_ids)
+        if not puzzle:
+            tried = set([level_choice])
+            for delta in [1, -1, 2, -2, 3, -3]:
+                cand = max(diff_cfg.min_level, min(diff_cfg.max_level, level_choice + delta))
+                if cand in tried:
+                    continue
+                tried.add(cand)
+                puzzle = get_random_puzzle_for_level_and_players_excluding(conn, cand, players_filter, exclude_ids)
+                if puzzle:
+                    break
         if not puzzle:
             return render_template(
-                "quick.html",
+                "play.html",
                 puzzle=None,
-                turns_filter=turns_filter,
                 requested=True,
                 require_login=False,
                 party=party,
                 players_count=players_filter,
+                active_sessions=[],
+                elo=elo_value,
+                note="No suitable puzzle found. Please generate more puzzles.",
             )
         layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(puzzle.start_layout_json, puzzle.actions_json, puzzle.opponent_row_index)
         solved_layout = json.loads(puzzle.solved_layout_json)
         count, solved = get_puzzle_stats(conn, puzzle.id)
         solve_pct = (solved / count * 100.0) if count else None
-        # Create a session for this new puzzle start
         member_ids = [m[0] for m in party_rows]
         session_id = create_game_session(
             conn,
@@ -346,20 +339,21 @@ def create_app(db_path: str) -> Flask:
             puzzle_id=puzzle.id,
             expected_turns=puzzle.num_actions,
             member_user_ids=member_ids,
+            mode='ranked',
         )
         return render_template(
-            "quick.html",
+            "play.html",
             puzzle=puzzle,
             layout=layout,
             expected_turns=puzzle.num_actions,
             solve_pct=solve_pct,
-            turns_filter=turns_filter,
             requested=True,
             require_login=False,
             party=party,
             players_count=players_filter,
             session_id=session_id,
             solved_layout=solved_layout,
+            elo=elo_value,
         )
 
     @app.route("/puzzle/<int:puzzle_id>")
@@ -410,17 +404,14 @@ def create_app(db_path: str) -> Flask:
                 except Exception:
                     pass
             if mode == 'ranked':
-                return redirect(url_for("ranked"))
+                return redirect(url_for("play"))
         else:
             # Legacy fallback without session
             add_game_result(conn, puzzle_id, solved_flag, seconds_val, user_id=user_id)
-        kwargs = {}
-        if turns_filter:
-            kwargs["turns"] = turns_filter
-        return redirect(url_for("quick", **kwargs))
+        return redirect(url_for("play"))
 
-    @app.route("/quick/give_up", methods=["POST"])
-    def quick_give_up():
+    @app.route("/play/give_up", methods=["POST"])
+    def play_give_up():
         current = session.get("user")
         if not current:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
@@ -444,9 +435,9 @@ def create_app(db_path: str) -> Flask:
         # Mark loss and complete
         update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
         complete_session(conn, sid)
-        # Clear lobby readiness so next time starts from unready
+        # Clear lobby readiness for ranked lobby (since unified play uses ranked mode)
         try:
-            lobby_clear_all_ready(conn, inviter_id, 'quick')
+            lobby_clear_all_ready(conn, inviter_id, 'ranked')
         except Exception:
             pass
         # Fetch solution steps and initial layout
@@ -475,9 +466,9 @@ def create_app(db_path: str) -> Flask:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         data = request.get_json(silent=True) or {}
         user_code = (data.get("user_code") or "").strip().upper()
-        mode = (data.get("mode") or "quick").strip().lower()
+        mode = (data.get("mode") or "ranked").strip().lower()
         if mode not in ("quick", "ranked"):
-            mode = "quick"
+            mode = "ranked"
         if not user_code:
             return jsonify({"ok": False, "error": "missing_user_code"}), 400
         # Look up invitee by code
@@ -490,8 +481,9 @@ def create_app(db_path: str) -> Flask:
             return jsonify({"ok": False, "error": "cannot_invite_self"}), 400
         token = secrets.token_urlsafe(16)
         expires_at = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
-        invite_id = create_invite(conn, inviter_id=inviter_id, invitee_id=invitee_id, mode=mode, token=token, expires_at_iso=expires_at)
-        return jsonify({"ok": True, "invite_id": invite_id, "expires_at": expires_at, "mode": mode})
+        # Force unified play mode invites to 'ranked'
+        invite_id = create_invite(conn, inviter_id=inviter_id, invitee_id=invitee_id, mode='ranked', token=token, expires_at_iso=expires_at)
+        return jsonify({"ok": True, "invite_id": invite_id, "expires_at": expires_at, "mode": 'ranked'})
 
     @app.route("/api/invites/pending", methods=["GET"])
     def api_invites_pending():
@@ -530,9 +522,9 @@ def create_app(db_path: str) -> Flask:
         cur.execute("SELECT inviter_id, mode FROM invites WHERE id = ?", (invite_id,))
         inv_row = cur.fetchone()
         inviter_id = int(inv_row[0]) if inv_row else None
-        mode = str(inv_row[1]) if inv_row and inv_row[1] else 'quick'
+        mode = str(inv_row[1]) if inv_row and inv_row[1] else 'ranked'
         ok = accept_invite(conn, invite_id, current.get("id"))
-        return jsonify({"ok": bool(ok), "mode": mode, "inviter_id": inviter_id})
+        return jsonify({"ok": bool(ok), "mode": 'ranked', "inviter_id": inviter_id})
 
     @app.route("/api/party", methods=["GET"])
     def api_party():
@@ -540,10 +532,10 @@ def create_app(db_path: str) -> Flask:
         if not current:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         inviter_id = current.get("id")
-        mode = (request.args.get("mode") or "quick").strip().lower()
+        mode = (request.args.get("mode") or "ranked").strip().lower()
         if mode not in ("quick", "ranked"):
-            mode = "quick"
-        rows = get_party_for_inviter(conn, inviter_id, mode=mode)
+            mode = "ranked"
+        rows = get_party_for_inviter(conn, inviter_id, mode='ranked')
         party = [{"user_id": r[0], "display_name": r[1]} for r in rows]
         # players_count is total participants (host + invitees)
         return jsonify({"ok": True, "party": party, "players_count": 1 + len(party)})
@@ -595,160 +587,8 @@ def create_app(db_path: str) -> Flask:
 
     @app.route("/ranked")
     def ranked():
-        # Require sign-in
-        if not session.get("user"):
-            return redirect(url_for("index"))
-        current_user = session.get("user")
-        inviter_id = current_user.get("id") if current_user else None
-        # Determine lobby host for ranked
-        host_id = inviter_id
-        if inviter_id:
-            latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, inviter_id, 'ranked')
-            if latest_inviter:
-                host_id = latest_inviter
-        # Current party for host
-        party_rows = get_party_for_inviter(conn, host_id, mode='ranked') if host_id else []
-        party = [{"user_id": host_id, "display_name": inviter_display_name(conn, host_id)}] + [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
-        requested = request.args.get("go") == "1"
-        session_q = request.args.get("session_id")
-        # Players count for selection (host + accepted invitees)
-        invited_count = len(party_rows)
-        players_filter = max(1, min(5, 1 + invited_count))
-
-        # Ranked-only ELO
-        ranked_rows = get_user_ranked_results_with_puzzle_meta(conn, inviter_id)
-        elo_cfg = EloConfig()
-        elo_value = compute_user_elo(ranked_rows, elo_cfg)
-
-        # Resuming a specific session
-        if session_q:
-            try:
-                resume_session_id = int(session_q)
-            except Exception:
-                return redirect(url_for("ranked"))
-            sess = get_session_by_id(conn, resume_session_id)
-            if not sess:
-                return redirect(url_for("ranked"))
-            sess_id, sess_puzzle_id, sess_expected_turns, sess_inviter_id, sess_status, sess_completed_at, sess_started_at = sess
-            if sess_status != 'active':
-                return redirect(url_for("ranked"))
-            # Verify membership
-            member_rows = get_session_members_with_names(conn, sess_id)
-            member_ids = [m[0] for m in member_rows]
-            if inviter_id not in ([sess_inviter_id] + member_ids):
-                return redirect(url_for("ranked"))
-            sp = get_puzzle_by_id(conn, sess_puzzle_id)
-            if not sp:
-                return redirect(url_for("ranked"))
-            layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(sp.start_layout_json, sp.actions_json, sp.opponent_row_index)
-            solved_layout = json.loads(sp.solved_layout_json)
-            count, solved = get_puzzle_stats(conn, sp.id)
-            solve_pct = (solved / count * 100.0) if count else None
-            players_count_from_session = max(1, min(5, len(member_rows)))
-            return render_template(
-                "ranked.html",
-                puzzle=sp,
-                layout=layout,
-                expected_turns=sp.num_actions,
-                solve_pct=solve_pct,
-                requested=True,
-                require_login=False,
-                party=[{"user_id": uid, "display_name": name} for (uid, name) in member_rows if uid != inviter_id],
-                players_count=players_count_from_session,
-                session_id=sess_id,
-                solved_layout=solved_layout,
-                elo=elo_value,
-            )
-
-        # If not requested, show setup and single resumable ranked session if present
-        if not requested:
-            active_row = get_single_active_ranked_session_for_user(conn, inviter_id) if inviter_id else None
-            active = []
-            if active_row:
-                sid, pid, exp_turns, started_at = active_row
-                members = get_session_members_with_names(conn, sid)
-                players_cnt = max(1, min(5, len(members)))
-                other_names = [name for (uid, name) in members if uid != inviter_id]
-                active.append({
-                    "session_id": sid,
-                    "puzzle_id": pid,
-                    "players_count": players_cnt,
-                    "others": other_names,
-                    "expected_turns": exp_turns,
-                    "started_at": started_at,
-                })
-            return render_template(
-                "ranked.html",
-                puzzle=None,
-                requested=False,
-                require_login=False,
-                party=party,
-                players_count=players_filter,
-                active_sessions=active,
-                elo=elo_value,
-            )
-
-        # Enforce single active ranked session per user
-        existing = get_single_active_ranked_session_for_user(conn, host_id) if host_id else None
-        if existing:
-            sid, pid, exp_turns, _started_at = existing
-            return redirect(url_for("ranked", session_id=sid))
-
-        # Select difficulty for ranked
-        diff_cfg = RankedDifficultyConfig()
-        level_choice = select_ranked_level(ranked_rows, elo_value, diff_cfg)
-        exclude_ids = get_user_ranked_history_puzzle_ids(conn, inviter_id)
-        puzzle = get_random_puzzle_for_level_and_players_excluding(conn, level_choice, players_filter, exclude_ids)
-        if not puzzle:
-            # Try nearby levels
-            tried = set([level_choice])
-            for delta in [1, -1, 2, -2, 3, -3]:
-                cand = max(diff_cfg.min_level, min(diff_cfg.max_level, level_choice + delta))
-                if cand in tried:
-                    continue
-                tried.add(cand)
-                puzzle = get_random_puzzle_for_level_and_players_excluding(conn, cand, players_filter, exclude_ids)
-                if puzzle:
-                    break
-        if not puzzle:
-            return render_template(
-                "ranked.html",
-                puzzle=None,
-                requested=True,
-                require_login=False,
-                party=party,
-                players_count=players_filter,
-                active_sessions=[],
-                elo=elo_value,
-                note="No suitable ranked puzzle found. Please generate more puzzles.",
-            )
-        layout, _actions_unused, _opp_idx = _normalize_layout_and_actions(puzzle.start_layout_json, puzzle.actions_json, puzzle.opponent_row_index)
-        solved_layout = json.loads(puzzle.solved_layout_json)
-        count, solved = get_puzzle_stats(conn, puzzle.id)
-        solve_pct = (solved / count * 100.0) if count else None
-        member_ids = [m[0] for m in party_rows]
-        session_id = create_game_session(
-            conn,
-            inviter_id=host_id or 0,
-            puzzle_id=puzzle.id,
-            expected_turns=puzzle.num_actions,
-            member_user_ids=member_ids,
-            mode='ranked',
-        )
-        return render_template(
-            "ranked.html",
-            puzzle=puzzle,
-            layout=layout,
-            expected_turns=puzzle.num_actions,
-            solve_pct=solve_pct,
-            requested=True,
-            require_login=False,
-            party=party,
-            players_count=invited_count,
-            session_id=session_id,
-            solved_layout=solved_layout,
-            elo=elo_value,
-        )
+        # Preserve existing links by redirecting to unified Play
+        return redirect(url_for("play"))
 
     @app.route("/ranked/give_up", methods=["POST"])
     def ranked_give_up():
@@ -965,16 +805,16 @@ def create_app(db_path: str) -> Flask:
         if not current:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         user_id = int(current.get("id"))
-        mode = (request.args.get("mode") or "quick").strip().lower()
+        mode = (request.args.get("mode") or "ranked").strip().lower()
         if mode not in ("quick", "ranked"):
-            mode = "quick"
+            mode = "ranked"
         inviter_id = user_id
         latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, user_id, mode)
         if latest_inviter:
             inviter_id = latest_inviter
         # Build party list (inviter + accepted invitees)
         inviter_display = inviter_display_name(conn, inviter_id)
-        party_rows = get_party_for_inviter(conn, inviter_id, mode=mode)
+        party_rows = get_party_for_inviter(conn, inviter_id, mode='ranked')
         members = [(inviter_id, inviter_display)] + party_rows
         ready_map = lobby_get_ready_map(conn, inviter_id, mode)
         party = [{"user_id": uid, "display_name": name, "ready": bool(ready_map.get(uid, False))} for (uid, name) in members]
@@ -982,12 +822,9 @@ def create_app(db_path: str) -> Flask:
         can_start = True if len(party) <= 1 else all(m.get("ready") for m in party)
         # Existing active session id
         active_session_id = None
-        if mode == 'quick':
-            rows = get_active_quick_sessions_for_user(conn, inviter_id)
-            active_session_id = rows[0][0] if rows else None
-        else:
-            r = get_single_active_ranked_session_for_user(conn, inviter_id)
-            active_session_id = r[0] if r else None
+        # Unified play treats any active session as blocking
+        rows = get_active_sessions_for_user(conn, inviter_id)
+        active_session_id = rows[0][0] if rows else None
         return jsonify({"ok": True, "inviter_id": inviter_id, "mode": mode, "party": party, "players_count": len(party), "can_start": can_start, "active_session_id": active_session_id})
 
     @app.route("/api/lobby/ready", methods=["POST"])
@@ -996,9 +833,9 @@ def create_app(db_path: str) -> Flask:
         if not current:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         data = request.get_json(silent=True) or {}
-        mode = (data.get("mode") or "quick").strip().lower()
+        mode = (data.get("mode") or "ranked").strip().lower()
         if mode not in ("quick", "ranked"):
-            mode = "quick"
+            mode = "ranked"
         ready_flag = True if data.get("ready") is True else False
         user_id = int(current.get("id"))
         inviter_id = user_id
@@ -1014,9 +851,9 @@ def create_app(db_path: str) -> Flask:
         if not current:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         data = request.get_json(silent=True) or {}
-        mode = (data.get("mode") or "quick").strip().lower()
+        mode = (data.get("mode") or "ranked").strip().lower()
         if mode not in ("quick", "ranked"):
-            mode = "quick"
+            mode = "ranked"
         target_user_id = data.get("user_id")
         try:
             target_user_id = int(target_user_id)
@@ -1037,9 +874,9 @@ def create_app(db_path: str) -> Flask:
         if not current:
             return jsonify({"ok": False, "error": "not_authenticated"}), 401
         data = request.get_json(silent=True) or {}
-        mode = (data.get("mode") or "quick").strip().lower()
+        mode = (data.get("mode") or "ranked").strip().lower()
         if mode not in ("quick", "ranked"):
-            mode = "quick"
+            mode = "ranked"
         user_id = int(current.get("id"))
         inviter_id = get_latest_inviter_for_invitee_and_mode(conn, user_id, mode)
         if not inviter_id:
@@ -1071,61 +908,42 @@ def create_app(db_path: str) -> Flask:
             return jsonify({"ok": False, "error": "not_all_ready"}), 400
         # Reuse existing active session for this host/mode if any
         existing_session_id = None
-        if mode == 'quick':
-            rows_q = get_active_quick_sessions_for_user(conn, inviter_id)
-            existing_session_id = rows_q[0][0] if rows_q else None
-        else:
-            r = get_single_active_ranked_session_for_user(conn, inviter_id)
-            existing_session_id = r[0] if r else None
+        r = get_single_active_ranked_session_for_user(conn, inviter_id)
+        existing_session_id = r[0] if r else None
         if existing_session_id:
-            redirect_url = ("/quick?session_id=" + str(existing_session_id)) if mode == 'quick' else ("/ranked?session_id=" + str(existing_session_id))
+            redirect_url = "/play?session_id=" + str(existing_session_id)
             return jsonify({"ok": True, "redirect_url": redirect_url})
-        # Create a new session and choose one puzzle for the entire lobby
+        # Create a new session and choose one puzzle for the entire lobby (always ranked)
         players_count = max(1, min(5, len(members)))
-        if mode == 'quick':
-            puzzle = get_random_puzzle_for_filters(conn, players_count, None)
-            if not puzzle:
-                return jsonify({"ok": False, "error": "no_puzzle"}), 400
-            member_ids = [uid for (uid, _name) in party_rows]
-            session_id = create_game_session(
-                conn,
-                inviter_id=inviter_id,
-                puzzle_id=puzzle.id,
-                expected_turns=puzzle.num_actions,
-                member_user_ids=member_ids,
-                mode='quick',
-            )
-            return jsonify({"ok": True, "redirect_url": "/quick?session_id=" + str(session_id)})
-        else:
-            ranked_rows = get_user_ranked_results_with_puzzle_meta(conn, inviter_id)
-            elo_cfg = EloConfig()
-            elo_value = compute_user_elo(ranked_rows, elo_cfg)
-            diff_cfg = RankedDifficultyConfig()
-            level_choice = select_ranked_level(ranked_rows, elo_value, diff_cfg)
-            exclude_ids = get_user_ranked_history_puzzle_ids(conn, inviter_id)
-            puzzle = get_random_puzzle_for_level_and_players_excluding(conn, level_choice, players_count, exclude_ids)
-            if not puzzle:
-                tried = set([level_choice])
-                for delta in [1, -1, 2, -2, 3, -3]:
-                    cand = max(diff_cfg.min_level, min(diff_cfg.max_level, level_choice + delta))
-                    if cand in tried:
-                        continue
-                    tried.add(cand)
-                    puzzle = get_random_puzzle_for_level_and_players_excluding(conn, cand, players_count, exclude_ids)
-                    if puzzle:
-                        break
-            if not puzzle:
-                return jsonify({"ok": False, "error": "no_puzzle"}), 400
-            member_ids = [uid for (uid, _name) in party_rows]
-            session_id = create_game_session(
-                conn,
-                inviter_id=inviter_id,
-                puzzle_id=puzzle.id,
-                expected_turns=puzzle.num_actions,
-                member_user_ids=member_ids,
-                mode='ranked',
-            )
-            return jsonify({"ok": True, "redirect_url": "/ranked?session_id=" + str(session_id)})
+        ranked_rows = get_user_results_with_puzzle_meta(conn, inviter_id)
+        elo_cfg = EloConfig()
+        elo_value = compute_user_elo(ranked_rows, elo_cfg)
+        diff_cfg = RankedDifficultyConfig()
+        level_choice = select_ranked_level(ranked_rows, elo_value, diff_cfg)
+        exclude_ids = get_user_ranked_history_puzzle_ids(conn, inviter_id)
+        puzzle = get_random_puzzle_for_level_and_players_excluding(conn, level_choice, players_count, exclude_ids)
+        if not puzzle:
+            tried = set([level_choice])
+            for delta in [1, -1, 2, -2, 3, -3]:
+                cand = max(diff_cfg.min_level, min(diff_cfg.max_level, level_choice + delta))
+                if cand in tried:
+                    continue
+                tried.add(cand)
+                puzzle = get_random_puzzle_for_level_and_players_excluding(conn, cand, players_count, exclude_ids)
+                if puzzle:
+                    break
+        if not puzzle:
+            return jsonify({"ok": False, "error": "no_puzzle"}), 400
+        member_ids = [uid for (uid, _name) in party_rows]
+        session_id = create_game_session(
+            conn,
+            inviter_id=inviter_id,
+            puzzle_id=puzzle.id,
+            expected_turns=puzzle.num_actions,
+            member_user_ids=member_ids,
+            mode='ranked',
+        )
+        return jsonify({"ok": True, "redirect_url": "/play?session_id=" + str(session_id)})
 
     # --- Game session status API for client polling ---
     @app.route("/api/game_session/status", methods=["GET"])
