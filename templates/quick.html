@@ -75,7 +75,7 @@
       <p><a href="/quick">← Back</a></p>
       <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
       <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
-      <div class="grid">
+      <div class="grid" id="static-grid" style="display:none;">
         {% set rows = layout.rows %}
         {% set row_res = layout.row_reserves %}
         {% set col_res = layout.col_reserves %}
@@ -111,10 +111,13 @@
         {% endfor %}
       </div>
 
-      <form method="post" action="/report">
+      <div id="interactive-play" style="margin-top:8px;"></div>
+
+      <form method="post" action="/report" id="report-form">
         <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
         {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}" />{% endif %}
         {% if turns_filter %}<input type="hidden" name="turns_filter" value="{{ turns_filter }}" />{% endif %}
+        <input type="hidden" name="seconds" value="" />
         <label>
           <input type="checkbox" name="solved" value="1" /> Solved
         </label>
@@ -387,6 +390,246 @@
     }
   </script>
   <script type="module">
+    // --- Interactive Play (Quick) ---
+    (function initInteractivePlay(){
+      const container = document.getElementById('interactive-play');
+      const form = document.getElementById('report-form');
+      if (!container || !form) return;
+      // Ensure we have layout and solved_layout injected by server
+      const start = JSON.parse('{{ layout | tojson | safe }}');
+      const solved = JSON.parse('{{ solved_layout | tojson | safe }}');
+      if (!start || !start.rows || !start.row_reserves || !start.col_reserves) return;
+
+      // Timer tracking
+      let startTs = Date.now();
+      function setFormSeconds() {
+        const secInput = form.querySelector('input[name="seconds"]');
+        if (secInput) {
+          const elapsed = Math.max(0, Math.round((Date.now() - startTs) / 1000));
+          secInput.value = String(elapsed);
+        }
+      }
+      form.addEventListener('submit', () => setFormSeconds());
+
+      // Deep copy helpers
+      function cloneLayout(L){
+        return {
+          rows: L.rows.map(r => r.slice()),
+          row_reserves: L.row_reserves.map(rr => rr.slice()),
+          col_reserves: L.col_reserves.map(cr => cr.slice()),
+          opponent_row_index: Number(L.opponent_row_index || 0),
+        };
+      }
+      function layoutsEqual(a,b){
+        if (!a || !b) return false;
+        if (a.opponent_row_index !== b.opponent_row_index) return false;
+        const eq2 = (x,y) => x.length === y.length && x.every((v,i) => v === y[i]);
+        const eq2d = (x,y) => x.length === y.length && x.every((row,i) => eq2(row, y[i]));
+        return eq2d(a.rows,b.rows) && eq2d(a.row_reserves,b.row_reserves) && eq2d(a.col_reserves,b.col_reserves);
+      }
+
+      // State
+      let current = cloneLayout(start);
+      const history = [];
+      const opp = current.opponent_row_index;
+      const expectedTurns = Number(JSON.parse('{{ expected_turns | tojson | safe }}'));
+
+      // Actions
+      function pushAction(type, params){ history.push({ type, params }); }
+      function applyAction(act){
+        const t = act.type; const p = act.params || {};
+        if (t === 'row_right') return shiftRowRight(p.row_index);
+        if (t === 'row_left') return shiftRowLeft(p.row_index);
+        if (t === 'col_down') return shiftColDown(p.col_index);
+        if (t === 'col_up') return shiftColUp(p.col_index);
+        if (t === 'swap') return swapInRow(p.row_index, p.i, p.j);
+      }
+      function inverseAction(act){
+        const t = act.type; const p = act.params || {};
+        const cp = Object.assign({}, p);
+        if (t === 'row_right') return { type: 'row_left', params: cp };
+        if (t === 'row_left') return { type: 'row_right', params: cp };
+        if (t === 'col_down') return { type: 'col_up', params: cp };
+        if (t === 'col_up') return { type: 'col_down', params: cp };
+        if (t === 'swap') return { type: 'swap', params: cp };
+        return null;
+      }
+      function undo(){
+        const last = history.pop();
+        if (!last) return;
+        const inv = inverseAction(last);
+        if (inv) applyAction(inv);
+        render();
+      }
+      function reset(){ current = cloneLayout(start); history.length = 0; render(); }
+
+      // Low-level transforms (match Python semantics)
+      function shiftRowRight(r){
+        r = Number(r);
+        const top = current.row_reserves[r][0];
+        const bottom = current.row_reserves[r][1];
+        const arr = current.rows[r];
+        const rightmost = arr[arr.length - 1];
+        for (let k = arr.length - 1; k >= 1; k--) arr[k] = arr[k - 1];
+        arr[0] = top;
+        current.row_reserves[r][0] = bottom;
+        current.row_reserves[r][1] = rightmost;
+      }
+      function shiftRowLeft(r){
+        r = Number(r);
+        const top = current.row_reserves[r][0];
+        const bottom = current.row_reserves[r][1];
+        const arr = current.rows[r];
+        const leftmost = arr[0];
+        for (let k = 0; k < arr.length - 1; k++) arr[k] = arr[k + 1];
+        arr[arr.length - 1] = bottom;
+        current.row_reserves[r][0] = leftmost;
+        current.row_reserves[r][1] = top;
+      }
+      function shiftColDown(c){
+        c = Number(c);
+        const top = current.col_reserves[c][0];
+        const bottom = current.col_reserves[c][1];
+        const bottommost = current.rows[current.rows.length - 1][c];
+        for (let r = current.rows.length - 1; r >= 1; r--) current.rows[r][c] = current.rows[r - 1][c];
+        current.rows[0][c] = top;
+        current.col_reserves[c][0] = bottom;
+        current.col_reserves[c][1] = bottommost;
+      }
+      function shiftColUp(c){
+        c = Number(c);
+        const top = current.col_reserves[c][0];
+        const bottom = current.col_reserves[c][1];
+        const topmost = current.rows[0][c];
+        for (let r = 0; r < current.rows.length - 1; r++) current.rows[r][c] = current.rows[r + 1][c];
+        current.rows[current.rows.length - 1][c] = bottom;
+        current.col_reserves[c][0] = topmost;
+        current.col_reserves[c][1] = top;
+      }
+      function swapInRow(r,i,j){
+        r = Number(r); i = Number(i); j = Number(j);
+        const arr = current.rows[r];
+        const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+        // Mirror swap in opponent row
+        const oppArr = current.rows[opp];
+        const tmp2 = oppArr[i]; oppArr[i] = oppArr[j]; oppArr[j] = tmp2;
+      }
+
+      // UI elements
+      const header = document.createElement('div');
+      header.style.marginBottom = '6px';
+      const moveSpan = document.createElement('span');
+      const statusSpan = document.createElement('span'); statusSpan.style.marginLeft = '10px';
+      const btnUndo = document.createElement('button'); btnUndo.textContent = 'Undo'; btnUndo.style.marginLeft = '10px';
+      const btnReset = document.createElement('button'); btnReset.textContent = 'Reset'; btnReset.style.marginLeft = '6px';
+      header.appendChild(moveSpan); header.appendChild(statusSpan); header.appendChild(btnUndo); header.appendChild(btnReset);
+      container.appendChild(header);
+      btnUndo.addEventListener('click', (e) => { e.preventDefault(); undo(); });
+      btnReset.addEventListener('click', (e) => { e.preventDefault(); reset(); });
+
+      const outer = document.createElement('div'); outer.style.display = 'flex'; outer.style.alignItems = 'flex-start'; outer.style.gap = '8px';
+      const grid = document.createElement('div'); grid.className = 'grid';
+      outer.appendChild(grid);
+      container.appendChild(outer);
+
+      // Swap selection
+      let selected = null; // {r,c}
+
+      function render(){
+        // Moves + status
+        moveSpan.textContent = `Moves: ${history.length}${Number.isFinite(expectedTurns) ? ' / ' + expectedTurns : ''}`;
+        const isSolved = layoutsEqual(current, solved);
+        statusSpan.textContent = isSolved ? 'Solved!' : '';
+        try {
+          const solvedCheckbox = form.querySelector('input[name="solved"]');
+          if (solvedCheckbox) solvedCheckbox.checked = isSolved;
+        } catch (_) {}
+
+        // Rebuild grid
+        grid.innerHTML = '';
+        // Bottom reserves first row (displayed at top)
+        {
+          const row = document.createElement('div'); row.className = 'row';
+          let cell = document.createElement('div'); cell.className = 'cell reserve'; cell.innerHTML='&nbsp;'; row.appendChild(cell);
+          cell = document.createElement('div'); cell.className = 'cell reserve'; cell.innerHTML='&nbsp;'; row.appendChild(cell);
+          for (let c = 0; c < 5; c++) { const d = document.createElement('div'); d.className = 'cell reserve'; d.textContent = String(current.col_reserves[c][1] || ''); row.appendChild(d); }
+          grid.appendChild(row);
+        }
+        // Top reserves
+        {
+          const row = document.createElement('div'); row.className = 'row';
+          let cell = document.createElement('div'); cell.className = 'cell reserve'; cell.innerHTML='&nbsp;'; row.appendChild(cell);
+          cell = document.createElement('div'); cell.className = 'cell reserve'; cell.innerHTML='&nbsp;'; row.appendChild(cell);
+          for (let c = 0; c < 5; c++) {
+            const d = document.createElement('div'); d.className = 'cell reserve'; d.textContent = String(current.col_reserves[c][0] || ''); row.appendChild(d);
+          }
+          grid.appendChild(row);
+        }
+        // Column controls (up)
+        const ctrlUp = document.createElement('div'); ctrlUp.className = 'row';
+        let pad = document.createElement('div'); pad.className = 'cell reserve'; pad.innerHTML='&nbsp;'; ctrlUp.appendChild(pad);
+        pad = document.createElement('div'); pad.className = 'cell reserve'; pad.innerHTML='&nbsp;'; ctrlUp.appendChild(pad);
+        for (let c = 0; c < 5; c++) {
+          const btn = document.createElement('button'); btn.textContent = '↑'; btn.style.width='100%'; btn.style.padding='4px 0';
+          const wrap = document.createElement('div'); wrap.className = 'cell'; wrap.style.padding='0'; wrap.appendChild(btn);
+          btn.addEventListener('click', (e) => { e.preventDefault(); pushAction('col_up', { col_index: c }); shiftColUp(c); render(); });
+          ctrlUp.appendChild(wrap);
+        }
+        grid.appendChild(ctrlUp);
+
+        // Main rows with per-row controls and swap clicks
+        for (let r = 0; r < current.rows.length; r++) {
+          const rowDiv = document.createElement('div'); rowDiv.className = 'row';
+          // Row reserve bottom
+          const resBot = document.createElement('div'); resBot.className = 'cell reserve'; resBot.textContent = String(current.row_reserves[r][1] || ''); rowDiv.appendChild(resBot);
+          // Row reserve top
+          const resTop = document.createElement('div'); resTop.className = 'cell reserve'; resTop.textContent = String(current.row_reserves[r][0] || ''); rowDiv.appendChild(resTop);
+          // 5 grid cells
+          for (let c = 0; c < 5; c++) {
+            const d = document.createElement('div'); d.className = 'cell' + (r === opp ? ' opponent' : ''); d.textContent = String(current.rows[r][c] || '');
+            // Swap click behavior only on player rows
+            if (r !== opp) {
+              d.style.cursor = 'pointer';
+              d.addEventListener('click', (e) => {
+                e.preventDefault();
+                if (!selected) { selected = { r, c }; d.style.outline = '2px solid #06c'; return; }
+                const { r: sr, c: sc } = selected;
+                const prevEl = grid.querySelector('[data-sel="1"]'); if (prevEl) { prevEl.removeAttribute('data-sel'); prevEl.style.outline = ''; }
+                selected = null;
+                if (sr === r && sc !== c) { pushAction('swap', { row_index: r, i: sc, j: c }); swapInRow(r, sc, c); render(); }
+              });
+              d.addEventListener('mousedown', () => { d.setAttribute('data-sel','1'); });
+            }
+            rowDiv.appendChild(d);
+          }
+          // Row left/right controls
+          const lrWrap = document.createElement('div'); lrWrap.className = 'cell'; lrWrap.style.padding='0 4px'; lrWrap.style.border='0';
+          const leftBtn = document.createElement('button'); leftBtn.textContent = '←'; leftBtn.style.marginRight='4px';
+          const rightBtn = document.createElement('button'); rightBtn.textContent = '→';
+          leftBtn.addEventListener('click', (e) => { e.preventDefault(); pushAction('row_left', { row_index: r }); shiftRowLeft(r); render(); });
+          rightBtn.addEventListener('click', (e) => { e.preventDefault(); pushAction('row_right', { row_index: r }); shiftRowRight(r); render(); });
+          // Disable on opponent row
+          if (r === opp) { leftBtn.disabled = true; rightBtn.disabled = true; leftBtn.style.opacity='0.6'; rightBtn.style.opacity='0.6'; }
+          lrWrap.appendChild(leftBtn); lrWrap.appendChild(rightBtn);
+          rowDiv.appendChild(lrWrap);
+          grid.appendChild(rowDiv);
+        }
+        // Column controls (down)
+        const ctrlDown = document.createElement('div'); ctrlDown.className = 'row';
+        let pad2 = document.createElement('div'); pad2.className = 'cell reserve'; pad2.innerHTML='&nbsp;'; ctrlDown.appendChild(pad2);
+        pad2 = document.createElement('div'); pad2.className = 'cell reserve'; pad2.innerHTML='&nbsp;'; ctrlDown.appendChild(pad2);
+        for (let c = 0; c < 5; c++) {
+          const btn = document.createElement('button'); btn.textContent = '↓'; btn.style.width='100%'; btn.style.padding='4px 0';
+          const wrap = document.createElement('div'); wrap.className = 'cell'; wrap.style.padding='0'; wrap.appendChild(btn);
+          btn.addEventListener('click', (e) => { e.preventDefault(); pushAction('col_down', { col_index: c }); shiftColDown(c); render(); });
+          ctrlDown.appendChild(wrap);
+        }
+        grid.appendChild(ctrlDown);
+      }
+
+      render();
+    })();
+
     const quickGiveUpBtn = document.getElementById('quick-give-up-btn');
     const quickSolutionModal = document.getElementById('quick-solution-modal');
     const quickSolutionSteps = document.getElementById('quick-solution-steps');
@@ -441,13 +684,13 @@
                 // Bottom reserves row displayed first (matches page)
                 {
                   const cells = ['&nbsp;','&nbsp;'];
-                  for (let c = 0; c < 5; c++) cells.push(String(col_res[c][1] ?? ''));
+                  for (let c = 0; c < 5; c++) cells.push(String(col_res[c][1] || ''));
                   grid.appendChild(makeRow(cells));
                 }
                 // Top reserves row
                 {
                   const cells = ['&nbsp;','&nbsp;'];
-                  for (let c = 0; c < 5; c++) cells.push(String(col_res[c][0] ?? ''));
+                  for (let c = 0; c < 5; c++) cells.push(String(col_res[c][0] || ''));
                   grid.appendChild(makeRow(cells));
                 }
                 // Main rows
@@ -455,14 +698,14 @@
                   const rowDiv = document.createElement('div');
                   rowDiv.className = 'row';
                   // prepend two reserve cells
-                  const resBot = document.createElement('div'); resBot.className = 'cell reserve'; resBot.textContent = String(row_res[r][1] ?? '');
-                  const resTop = document.createElement('div'); resTop.className = 'cell reserve'; resTop.textContent = String(row_res[r][0] ?? '');
+                  const resBot = document.createElement('div'); resBot.className = 'cell reserve'; resBot.textContent = String(row_res[r][1] || '');
+                  const resTop = document.createElement('div'); resTop.className = 'cell reserve'; resTop.textContent = String(row_res[r][0] || '');
                   rowDiv.appendChild(resBot);
                   rowDiv.appendChild(resTop);
                   for (let cc = 0; cc < 5; cc++) {
                     const gc = document.createElement('div');
                     gc.className = 'cell' + (r === opp ? ' opponent' : '');
-                    gc.textContent = String(rows[r][cc] ?? '');
+                    gc.textContent = String(rows[r][cc] || '');
                     rowDiv.appendChild(gc);
                   }
                   grid.appendChild(rowDiv);
