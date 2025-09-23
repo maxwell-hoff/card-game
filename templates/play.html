@@ -8,7 +8,9 @@
     <p><strong>Your ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
     {% if not puzzle %}
       {% set has_active = active_sessions and active_sessions|length > 0 %}
-      <form method="get" action="/play">
+      <form method="get" action="/play" id="play-start-form">
+        <label for="players">Players:</label>
+        <input id="players" name="players" type="number" min="1" max="5" value="{{ players_count }}" />
         <input type="hidden" name="go" value="1" />
         <button id="go-top-btn" type="submit" {% if has_active %}disabled title="You have an active game. Complete or give up first." style="opacity:0.6; cursor:not-allowed;"{% endif %}>Play</button>
       </form>
@@ -269,9 +271,8 @@
         const j = await r.json();
         if (!j || !j.ok) return;
         const party = j.party || [];
-        const playersCountEl = document.getElementById('players-count');
         const list = document.getElementById('party-list');
-        if (playersCountEl) playersCountEl.textContent = String(j.players_count || (1 + party.length));
+        // Do not override selected players with party size; selection is independent
         if (list) {
           if (party.length <= 1) {
             list.innerHTML = '';
@@ -291,9 +292,17 @@
     (function initLobbyPolling() {
       const readyBtn = document.getElementById('ready-toggle');
       const goTopBtn = document.getElementById('go-top-btn');
+      const playersInput = document.getElementById('players');
+      const playersCountSpan = document.getElementById('players-count');
       const lobbyStatus = document.getElementById('lobby-status');
       let isReady = false;
       let pollTimer = null;
+
+      if (playersInput && playersCountSpan) {
+        const sync = () => { const v = Math.max(1, Math.min(5, parseInt(playersInput.value || '1', 10) || 1)); playersCountSpan.textContent = String(v); };
+        playersInput.addEventListener('input', sync);
+        sync();
+      }
 
       function renderReadyPills(party) {
         const pills = document.querySelectorAll('.ready-pill');
@@ -438,7 +447,8 @@
               const partyLen = (j && j.ok && Array.isArray(j.party)) ? j.party.length : 1;
               if (partyLen > 1) {
                 e.preventDefault();
-                const rs = await fetch('/api/lobby/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked' }) });
+                const selectedPlayers = playersInput ? Math.max(1, Math.min(5, parseInt(playersInput.value || '1', 10) || 1)) : undefined;
+                const rs = await fetch('/api/lobby/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ranked', players: selectedPlayers }) });
                 const sr = await rs.json().catch(() => null);
                 if (sr && sr.ok && sr.redirect_url) {
                   location.href = sr.redirect_url;

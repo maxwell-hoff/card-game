@@ -220,9 +220,15 @@ def create_app(db_path: str) -> Flask:
         party = [{"user_id": host_id, "display_name": inviter_display_name(conn, host_id)}] + [{"user_id": r[0], "display_name": r[1]} for r in party_rows]
         requested = request.args.get("go") == "1"
         session_q = request.args.get("session_id")
-        # Players = host + invitees
+        players_q = request.args.get("players")
+        # Players = selected override but cannot be less than party size
         invited_count = len(party_rows)
-        players_filter = max(1, min(5, 1 + invited_count))
+        try:
+            players_selected = int(players_q) if players_q else None
+        except Exception:
+            players_selected = None
+        min_party = max(1, min(5, 1 + invited_count))
+        players_filter = min_party if players_selected is None else max(min_party, min(5, max(1, players_selected)))
 
         # ELO across all results? Requirement: ELO applied to all games. We'll compute using ranked history for difficulty, but all games are ranked.
         ranked_rows = get_user_results_with_puzzle_meta(conn, inviter_id)
@@ -836,6 +842,12 @@ def create_app(db_path: str) -> Flask:
         mode = (data.get("mode") or "ranked").strip().lower()
         if mode not in ("quick", "ranked"):
             mode = "ranked"
+        # Optional client-selected players count
+        players_selected = data.get("players")
+        try:
+            players_selected = int(players_selected) if players_selected is not None else None
+        except Exception:
+            players_selected = None
         ready_flag = True if data.get("ready") is True else False
         user_id = int(current.get("id"))
         inviter_id = user_id
@@ -914,7 +926,8 @@ def create_app(db_path: str) -> Flask:
             redirect_url = "/play?session_id=" + str(existing_session_id)
             return jsonify({"ok": True, "redirect_url": redirect_url})
         # Create a new session and choose one puzzle for the entire lobby (always ranked)
-        players_count = max(1, min(5, len(members)))
+        min_party = max(1, min(5, len(members)))
+        players_count = min_party if players_selected is None else max(min_party, min(5, max(1, players_selected)))
         ranked_rows = get_user_results_with_puzzle_meta(conn, inviter_id)
         elo_cfg = EloConfig()
         elo_value = compute_user_elo(ranked_rows, elo_cfg)
