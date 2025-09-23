@@ -196,12 +196,12 @@
         try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.checked = done; } catch(_) {}
 
         grid.innerHTML='';
+        // Column up controls ABOVE reserves
+        { const row=document.createElement('div'); row.className='row'; let d=document.createElement('div'); d.className='cell reserve'; d.innerHTML='&nbsp;'; row.appendChild(d); d=document.createElement('div'); d.className='cell reserve'; d.innerHTML='&nbsp;'; row.appendChild(d); for(let c=0;c<5;c++){ const btn=document.createElement('button'); btn.textContent='↑'; btn.style.width='100%'; btn.style.padding='4px 0'; const wrap=document.createElement('div'); wrap.className='cell'; wrap.style.padding='0'; wrap.appendChild(btn); btn.addEventListener('click', (e)=>{ e.preventDefault(); push('col_up',{col_index:c}); colUp(c); render(); }); row.appendChild(wrap);} grid.appendChild(row); }
         // Bottom reserves row (top display)
         { const row=document.createElement('div'); row.className='row'; let d=document.createElement('div'); d.className='cell reserve'; d.innerHTML='&nbsp;'; row.appendChild(d); d=document.createElement('div'); d.className='cell reserve'; d.innerHTML='&nbsp;'; row.appendChild(d); for(let c=0;c<5;c++){ const x=document.createElement('div'); x.className='cell reserve'; x.textContent=String(current.col_reserves[c][1]||''); row.appendChild(x);} grid.appendChild(row); }
         // Top reserves row
         { const row=document.createElement('div'); row.className='row'; let d=document.createElement('div'); d.className='cell reserve'; d.innerHTML='&nbsp;'; row.appendChild(d); d=document.createElement('div'); d.className='cell reserve'; d.innerHTML='&nbsp;'; row.appendChild(d); for(let c=0;c<5;c++){ const x=document.createElement('div'); x.className='cell reserve'; x.textContent=String(current.col_reserves[c][0]||''); row.appendChild(x);} grid.appendChild(row); }
-        // Column up controls
-        { const row=document.createElement('div'); row.className='row'; let d=document.createElement('div'); d.className='cell reserve'; d.innerHTML='&nbsp;'; row.appendChild(d); d=document.createElement('div'); d.className='cell reserve'; d.innerHTML='&nbsp;'; row.appendChild(d); for(let c=0;c<5;c++){ const btn=document.createElement('button'); btn.textContent='↑'; btn.style.width='100%'; btn.style.padding='4px 0'; const wrap=document.createElement('div'); wrap.className='cell'; wrap.style.padding='0'; wrap.appendChild(btn); btn.addEventListener('click', (e)=>{ e.preventDefault(); push('col_up',{col_index:c}); colUp(c); render(); }); row.appendChild(wrap);} grid.appendChild(row); }
         // Rows
         for (let r=0; r<current.rows.length; r++) {
           const row=document.createElement('div'); row.className='row';
