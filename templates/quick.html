@@ -554,7 +554,7 @@
           pad = document.createElement('div'); pad.className = 'cell reserve'; pad.innerHTML='&nbsp;'; ctrlUp.appendChild(pad);
           for (let c = 0; c < 5; c++) {
             const btn = document.createElement('button'); btn.textContent = '↑'; btn.style.width='100%'; btn.style.padding='4px 0';
-            const wrap = document.createElement('div'); wrap.className = 'cell'; wrap.style.padding='0'; wrap.appendChild(btn);
+            const wrap = document.createElement('div'); wrap.className = 'cell'; wrap.appendChild(btn);
             btn.addEventListener('click', (e) => { e.preventDefault(); pushAction('col_up', { col_index: c }); shiftColUp(c); render(); });
             ctrlUp.appendChild(wrap);
           }
@@ -622,7 +622,7 @@
         pad2 = document.createElement('div'); pad2.className = 'cell reserve'; pad2.innerHTML='&nbsp;'; ctrlDown.appendChild(pad2);
         for (let c = 0; c < 5; c++) {
           const btn = document.createElement('button'); btn.textContent = '↓'; btn.style.width='100%'; btn.style.padding='4px 0';
-          const wrap = document.createElement('div'); wrap.className = 'cell'; wrap.style.padding='0'; wrap.appendChild(btn);
+          const wrap = document.createElement('div'); wrap.className = 'cell'; wrap.appendChild(btn);
           btn.addEventListener('click', (e) => { e.preventDefault(); pushAction('col_down', { col_index: c }); shiftColDown(c); render(); });
           ctrlDown.appendChild(wrap);
         }
