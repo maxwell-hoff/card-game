@@ -166,8 +166,6 @@
       const expectedTurns = Number(JSON.parse('{{ expected_turns | default(0) | tojson | safe }}'));
 
       function push(type, params){ history.push({type, params}); }
-      function inv(act){ const t=act.type; const p=Object.assign({}, act.params||{}); if(t==='row_right')return{type:'row_left',params:p}; if(t==='row_left')return{type:'row_right',params:p}; if(t==='col_down')return{type:'col_up',params:p}; if(t==='col_up')return{type:'col_down',params:p}; if(t==='swap')return{type:'swap',params:p}; return null; }
-      function undo(){ const last=history.pop(); if(!last) return; const x=inv(last); if(x) apply(x); render(); }
       function reset(){ current = cloneLayout(start); history.length=0; render(); }
 
       function rowRight(r){ r=+r; const top=current.row_reserves[r][0], bottom=current.row_reserves[r][1]; const arr=current.rows[r]; const rightmost=arr[arr.length-1]; for(let k=arr.length-1;k>=1;k--) arr[k]=arr[k-1]; arr[0]=top; current.row_reserves[r][0]=bottom; current.row_reserves[r][1]=rightmost; }
@@ -179,11 +177,9 @@
 
       const header=document.createElement('div'); header.style.marginBottom='6px';
       const moveSpan=document.createElement('span'); const statusSpan=document.createElement('span'); statusSpan.style.marginLeft='10px';
-      const btnUndo=document.createElement('button'); btnUndo.textContent='Undo'; btnUndo.style.marginLeft='10px';
       const btnReset=document.createElement('button'); btnReset.textContent='Reset'; btnReset.style.marginLeft='6px';
-      header.appendChild(moveSpan); header.appendChild(statusSpan); header.appendChild(btnUndo); header.appendChild(btnReset);
+      header.appendChild(moveSpan); header.appendChild(statusSpan); header.appendChild(btnReset);
       container.appendChild(header);
-      btnUndo.addEventListener('click', (e)=>{ e.preventDefault(); undo(); });
       btnReset.addEventListener('click', (e)=>{ e.preventDefault(); reset(); });
 
       const grid=document.createElement('div'); grid.className='grid'; container.appendChild(grid);
@@ -194,6 +190,10 @@
         const done = eq(current, solved);
         statusSpan.textContent = done ? 'Solved!' : '';
         try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.checked = done; } catch(_) {}
+
+        // Determine eligible row for this turn
+        const numPlayers = Math.max(0, current.rows.length - 1);
+        const eligibleRow = numPlayers > 0 ? (1 + (history.length % numPlayers)) : null;
 
         grid.innerHTML='';
         // Column up controls ABOVE reserves
@@ -209,7 +209,7 @@
           d=document.createElement('div'); d.className='cell reserve'; d.textContent=String(current.row_reserves[r][0]||''); row.appendChild(d);
           for (let c=0; c<5; c++) {
             const cell=document.createElement('div'); cell.className='cell' + (r===opp ? ' opponent' : ''); cell.textContent=String(current.rows[r][c]||'');
-            if (r !== opp) {
+            if (r !== opp && (eligibleRow === null || r === eligibleRow)) {
               cell.style.cursor='pointer';
               cell.addEventListener('click', (e)=>{
                 e.preventDefault();
@@ -227,7 +227,7 @@
           const right=document.createElement('button'); right.textContent='→';
           left.addEventListener('click', (e)=>{ e.preventDefault(); push('row_left', { row_index:r }); rowLeft(r); render(); });
           right.addEventListener('click', (e)=>{ e.preventDefault(); push('row_right', { row_index:r }); rowRight(r); render(); });
-          if (r===opp) { left.disabled=true; right.disabled=true; left.style.opacity='0.6'; right.style.opacity='0.6'; }
+          if (r===opp || (eligibleRow !== null && r !== eligibleRow)) { left.disabled=true; right.disabled=true; left.style.opacity='0.6'; right.style.opacity='0.6'; }
           wrap.appendChild(left); wrap.appendChild(right); row.appendChild(wrap);
           grid.appendChild(row);
         }

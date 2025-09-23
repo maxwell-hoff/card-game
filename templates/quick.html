@@ -444,23 +444,6 @@
         if (t === 'col_up') return shiftColUp(p.col_index);
         if (t === 'swap') return swapInRow(p.row_index, p.i, p.j);
       }
-      function inverseAction(act){
-        const t = act.type; const p = act.params || {};
-        const cp = Object.assign({}, p);
-        if (t === 'row_right') return { type: 'row_left', params: cp };
-        if (t === 'row_left') return { type: 'row_right', params: cp };
-        if (t === 'col_down') return { type: 'col_up', params: cp };
-        if (t === 'col_up') return { type: 'col_down', params: cp };
-        if (t === 'swap') return { type: 'swap', params: cp };
-        return null;
-      }
-      function undo(){
-        const last = history.pop();
-        if (!last) return;
-        const inv = inverseAction(last);
-        if (inv) applyAction(inv);
-        render();
-      }
       function reset(){ current = cloneLayout(start); history.length = 0; render(); }
 
       // Low-level transforms (match Python semantics)
@@ -520,11 +503,9 @@
       header.style.marginBottom = '6px';
       const moveSpan = document.createElement('span');
       const statusSpan = document.createElement('span'); statusSpan.style.marginLeft = '10px';
-      const btnUndo = document.createElement('button'); btnUndo.textContent = 'Undo'; btnUndo.style.marginLeft = '10px';
       const btnReset = document.createElement('button'); btnReset.textContent = 'Reset'; btnReset.style.marginLeft = '6px';
-      header.appendChild(moveSpan); header.appendChild(statusSpan); header.appendChild(btnUndo); header.appendChild(btnReset);
+      header.appendChild(moveSpan); header.appendChild(statusSpan); header.appendChild(btnReset);
       container.appendChild(header);
-      btnUndo.addEventListener('click', (e) => { e.preventDefault(); undo(); });
       btnReset.addEventListener('click', (e) => { e.preventDefault(); reset(); });
 
       const outer = document.createElement('div'); outer.style.display = 'flex'; outer.style.alignItems = 'flex-start'; outer.style.gap = '8px';
@@ -544,6 +525,10 @@
           const solvedCheckbox = form.querySelector('input[name="solved"]');
           if (solvedCheckbox) solvedCheckbox.checked = isSolved;
         } catch (_) {}
+
+        // Determine eligible row for this turn (players are rows 1..N; 0 is opponent)
+        const numPlayers = Math.max(0, current.rows.length - 1);
+        const eligibleRow = numPlayers > 0 ? (1 + (history.length % numPlayers)) : null;
 
         // Rebuild grid
         grid.innerHTML = '';
@@ -590,7 +575,7 @@
           for (let c = 0; c < 5; c++) {
             const d = document.createElement('div'); d.className = 'cell' + (r === opp ? ' opponent' : ''); d.textContent = String(current.rows[r][c] || '');
             // Swap click behavior only on player rows
-            if (r !== opp) {
+            if (r !== opp && (eligibleRow === null || r === eligibleRow)) {
               d.style.cursor = 'pointer';
               d.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -611,7 +596,7 @@
           leftBtn.addEventListener('click', (e) => { e.preventDefault(); pushAction('row_left', { row_index: r }); shiftRowLeft(r); render(); });
           rightBtn.addEventListener('click', (e) => { e.preventDefault(); pushAction('row_right', { row_index: r }); shiftRowRight(r); render(); });
           // Disable on opponent row
-          if (r === opp) { leftBtn.disabled = true; rightBtn.disabled = true; leftBtn.style.opacity='0.6'; rightBtn.style.opacity='0.6'; }
+          if (r === opp || (eligibleRow !== null && r !== eligibleRow)) { leftBtn.disabled = true; rightBtn.disabled = true; leftBtn.style.opacity='0.6'; rightBtn.style.opacity='0.6'; }
           lrWrap.appendChild(leftBtn); lrWrap.appendChild(rightBtn);
           rowDiv.appendChild(lrWrap);
           grid.appendChild(rowDiv);
