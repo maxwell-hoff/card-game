@@ -14,17 +14,17 @@
       {% set col_res = layout.col_reserves %}
       {% set opp = layout.opponent_row_index %}
       <div class="row">
-        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
-        <div class="cell reserve" title="Column reserve bottom">&nbsp;</div>
+        <div class="cell reserve empty" title="Column reserve bottom"></div>
+        <div class="cell reserve empty" title="Column reserve bottom"></div>
         {% for c in range(5) %}
-          <div class="cell reserve" title="Column reserve bottom">{{ col_res[c][1] }}</div>
+          <div class="cell reserve{% if col_res[c][1] is none or col_res[c][1] == '' %} empty{% endif %}" title="Column reserve bottom">{{ col_res[c][1] }}</div>
         {% endfor %}
       </div>
       <div class="row">
-        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
-        <div class="cell reserve" title="Column reserve top">&nbsp;</div>
+        <div class="cell reserve empty" title="Column reserve top"></div>
+        <div class="cell reserve empty" title="Column reserve top"></div>
         {% for c in range(5) %}
-          <div class="cell reserve" title="Column reserve top">{{ col_res[c][0] }}</div>
+          <div class="cell reserve{% if col_res[c][0] is none or col_res[c][0] == '' %} empty{% endif %}" title="Column reserve top">{{ col_res[c][0] }}</div>
         {% endfor %}
       </div>
       {% for r in range(rows|length) %}

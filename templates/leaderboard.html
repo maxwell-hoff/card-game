@@ -3,7 +3,7 @@
   <h2>Leaderboard</h2>
 
   {% if user_summary %}
-    <div style="padding:10px; background:#f3f7ff; border:1px solid #cfe0ff; margin-bottom:12px;">
+    <div class="card" style="margin-bottom:12px;">
       <strong>Your Summary:</strong>
       <div>
         <span><strong>Rank:</strong> {{ user_summary.rank }}</span>
@@ -19,7 +19,7 @@
     </div>
   {% endif %}
 
-  <table border="1" cellpadding="6" cellspacing="0">
+  <table>
     <tr>
       <th>Rank</th>
       <th>Player</th>
