@@ -12,36 +12,36 @@
         <label for="players">Players:</label>
         <input id="players" name="players" type="number" min="1" max="5" value="{{ players_count }}" />
         <input type="hidden" name="go" value="1" />
-        <button id="go-top-btn" type="submit" {% if has_active %}disabled title="You have an active game. Complete or give up first." style="opacity:0.6; cursor:not-allowed;"{% endif %}>Play</button>
+        <button id="go-top-btn" class="btn btn-primary" type="submit" {% if has_active %}disabled title="You have an active game. Complete or give up first."{% endif %}>Play</button>
       </form>
       {% if has_active %}
         <div style="margin-top:6px; color:#666; font-size: 90%;">Complete your current game to start a new one.</div>
       {% endif %}
 
-      <div style="margin-top:12px; padding:8px; background:#f7f7f7; border:1px solid #ddd; border-radius:4px; max-width:520px;">
+      <div class="card" style="margin-top:12px; max-width:520px;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
             <strong>Players:</strong> <span id="players-count">{{ players_count }}</span>
           </div>
           <div>
-            <button id="invite-add-btn" title="Invite by user ID code" style="padding:4px 8px;">+ Invite</button>
+            <button id="invite-add-btn" class="btn btn-primary" title="Invite by user ID code">+ Invite</button>
           </div>
         </div>
         <div id="party-list" style="margin-top:8px;">
           {% if party and party|length > 1 %}
-            <ul id="party-ul" style="margin:0; padding-left:18px;"></ul>
+            <ul id="party-ul"></ul>
           {% endif %}
         </div>
         <div id="lobby-controls" style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-          <button id="ready-toggle" style="padding:4px 8px;">Ready</button>
-          <span id="lobby-status" style="color:#555;"></span>
+          <button id="ready-toggle" class="btn">Ready</button>
+          <span id="lobby-status" class="muted"></span>
         </div>
-        <div id="invite-msg" style="margin-top:6px; color:#333;"></div>
+        <div id="invite-msg" style="margin-top:6px;"></div>
       </div>
 
       {% if active_sessions and active_sessions|length > 0 %}
         <h3 style="margin-top:18px;">Resume your game</h3>
-        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse; min-width: 520px;">
+        <table>
           <thead>
             <tr>
               <th align="left">Puzzle ID</th>
@@ -114,19 +114,19 @@
         <label>
           <input type="checkbox" name="solved" value="1" /> Solved
         </label>
-        <button type="submit">Submit</button>
+        <button type="submit" class="btn btn-primary">Submit</button>
       </form>
 
       {% if session_id %}
       <div style="margin-top:8px;">
-        <button id="give-up-btn" style="padding:4px 8px; background:#f7e0e0; border:1px solid #e0b0b0; border-radius:4px;">Give Up</button>
+        <button id="give-up-btn" class="btn btn-danger">Give Up</button>
       </div>
       <!-- Solution modal -->
-      <div id="solution-modal" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background: rgba(0,0,0,0.4); z-index: 9999;">
-        <div style="background:#fff; width: 520px; max-width: 95vw; margin: 8% auto; padding: 16px; border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.3);">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div id="solution-modal" class="modal-overlay" style="display:none; z-index: 9999;">
+        <div class="modal">
+          <div class="modal-header">
             <h3 style="margin:0;">Solution</h3>
-            <button id="solution-modal-close" style="padding:4px 8px;">Close</button>
+            <button id="solution-modal-close" class="btn">Close</button>
           </div>
           <div id="solution-initial" style="margin-bottom:10px;"></div>
           <div id="solution-steps">
@@ -338,7 +338,7 @@
           nameSpan.textContent = m.display_name + ' ';
           li.appendChild(nameSpan);
           const pill = document.createElement('span');
-          pill.className = 'ready-pill';
+          pill.className = 'ready-pill pill';
           pill.setAttribute('data-user', String(m.user_id));
           li.appendChild(pill);
           const myId = window.__SESSION_USER_ID__;
