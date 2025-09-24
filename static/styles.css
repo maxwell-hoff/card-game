@@ -97,10 +97,14 @@ tbody tr:hover{ background: rgba(16,22,44,0.04); }
   border: 1px solid var(--border);
   padding: 10px 12px;
   width: 56px;
+  height: 56px;
   text-align: center;
   background: linear-gradient(180deg, #ffffff, #f6f8ff);
   border-radius: 8px;
   color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .grid .cell.empty, .grid .cell:empty{ background: transparent; border-color: transparent; box-shadow: none; }
 .reserve{ background: linear-gradient(180deg, rgba(124,92,255,0.18), rgba(124,92,255,0.06)); color:#2a1f55; }
