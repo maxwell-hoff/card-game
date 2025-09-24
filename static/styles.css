@@ -102,6 +102,7 @@ tbody tr:hover{ background: rgba(16,22,44,0.04); }
   border-radius: 8px;
   color: var(--text);
 }
+.grid .cell.empty, .grid .cell:empty{ background: transparent; border-color: transparent; box-shadow: none; }
 .reserve{ background: linear-gradient(180deg, rgba(124,92,255,0.18), rgba(124,92,255,0.06)); color:#2a1f55; }
 .opponent{ background: linear-gradient(180deg, rgba(239,68,68,0.15), rgba(239,68,68,0.06)); }
 
