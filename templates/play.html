@@ -124,6 +124,20 @@
       <div style="margin-top:8px;">
         <button id="give-up-btn" class="btn btn-danger">Give Up</button>
       </div>
+      <!-- Give up choice modal -->
+      <div id="giveup-choice-modal" class="modal-overlay" style="display:none; z-index: 9999;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3 style="margin:0;">Give up?</h3>
+            <button id="giveup-choice-close" class="btn">Close</button>
+          </div>
+          <p style="margin-top:8px;">Do you want to try again (counts as a loss) or show the solution?</p>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button id="try-again-btn" class="btn btn-primary">Try again</button>
+            <button id="show-solution-btn" class="btn">Show solution</button>
+          </div>
+        </div>
+      </div>
       <!-- Solution modal -->
       <div id="solution-modal" class="modal-overlay" style="display:none; z-index: 9999;">
         <div class="modal">
@@ -200,7 +214,7 @@
       const expectedTurns = Number(JSON.parse('{{ expected_turns | default(0) | tojson | safe }}'));
 
       function push(type, params){ history.push({type, params}); }
-      function reset(){ current = cloneLayout(start); history.length=0; render(); }
+      function reset(){ /* disabled */ }
 
       function rowRight(r){ r=+r; const top=current.row_reserves[r][0], bottom=current.row_reserves[r][1]; const arr=current.rows[r]; const rightmost=arr[arr.length-1]; for(let k=arr.length-1;k>=1;k--) arr[k]=arr[k-1]; arr[0]=top; current.row_reserves[r][0]=bottom; current.row_reserves[r][1]=rightmost; }
       function rowLeft(r){ r=+r; const top=current.row_reserves[r][0], bottom=current.row_reserves[r][1]; const arr=current.rows[r]; const leftmost=arr[0]; for(let k=0;k<arr.length-1;k++) arr[k]=arr[k+1]; arr[arr.length-1]=bottom; current.row_reserves[r][0]=leftmost; current.row_reserves[r][1]=top; }
@@ -211,10 +225,8 @@
 
       const header=document.createElement('div'); header.style.marginBottom='6px';
       const moveSpan=document.createElement('span'); const statusSpan=document.createElement('span'); statusSpan.style.marginLeft='10px';
-      const btnReset=document.createElement('button'); btnReset.textContent='Reset'; btnReset.style.marginLeft='6px';
-      header.appendChild(moveSpan); header.appendChild(statusSpan); header.appendChild(btnReset);
+      header.appendChild(moveSpan); header.appendChild(statusSpan);
       container.appendChild(header);
-      btnReset.addEventListener('click', (e)=>{ e.preventDefault(); reset(); });
 
       const grid=document.createElement('div'); grid.className='grid'; container.appendChild(grid);
       let selected=null;
@@ -651,6 +663,10 @@
     const solutionSteps = document.getElementById('solution-steps');
     const solutionInitial = document.getElementById('solution-initial');
     const solutionModalClose = document.getElementById('solution-modal-close');
+    const giveUpChoiceModal = document.getElementById('giveup-choice-modal');
+    const giveUpChoiceClose = document.getElementById('giveup-choice-close');
+    const tryAgainBtn = document.getElementById('try-again-btn');
+    const showSolutionBtn = document.getElementById('show-solution-btn');
     if (solutionModalClose && solutionModal) {
       solutionModalClose.addEventListener('click', () => {
         solutionModal.style.display = 'none';
@@ -659,9 +675,34 @@
       });
     }
     if (giveUpBtn) {
-      giveUpBtn.addEventListener('click', async (e) => {
+      giveUpBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        if (!confirm('Give up and record a loss for this game?')) return;
+        if (giveUpChoiceModal) giveUpChoiceModal.style.display = 'block';
+      });
+    }
+    if (giveUpChoiceClose && giveUpChoiceModal) {
+      giveUpChoiceClose.addEventListener('click', () => {
+        giveUpChoiceModal.style.display = 'none';
+      });
+    }
+    if (tryAgainBtn) {
+      tryAgainBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+          const sessionIdInput = document.querySelector('input[name="session_id"]');
+          const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+          if (!sessionId) return;
+          const r = await fetch('/play/try_again', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+          const j = await r.json().catch(() => null);
+          if (j && j.ok && j.redirect_url) {
+            location.href = j.redirect_url;
+          }
+        } catch (_) {}
+      });
+    }
+    if (showSolutionBtn) {
+      showSolutionBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
         try {
           const sessionIdInput = document.querySelector('input[name="session_id"]');
           const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
@@ -674,7 +715,6 @@
             const layout = j.layout || null;
             if (solutionInitial) {
               if (layout && layout.rows && layout.row_reserves && layout.col_reserves) {
-                // Render initial layout using same grid markup
                 const rows = layout.rows;
                 const row_res = layout.row_reserves;
                 const col_res = layout.col_reserves;
@@ -686,7 +726,6 @@
                 container.appendChild(title);
                 const grid = document.createElement('div');
                 grid.className = 'grid';
-                // Bottom reserves row
                 {
                   const row = document.createElement('div'); row.className = 'row';
                   let cell = document.createElement('div'); cell.className = 'cell reserve empty'; row.appendChild(cell);
@@ -694,7 +733,6 @@
                   for (let c = 0; c < 5; c++) { const d = document.createElement('div'); d.className = 'cell reserve'; d.textContent = String(col_res[c][1] ?? ''); if (!d.textContent) d.classList.add('empty'); row.appendChild(d); }
                   grid.appendChild(row);
                 }
-                // Top reserves row
                 {
                   const row = document.createElement('div'); row.className = 'row';
                   let cell = document.createElement('div'); cell.className = 'cell reserve empty'; row.appendChild(cell);
@@ -702,7 +740,6 @@
                   for (let c = 0; c < 5; c++) { const d = document.createElement('div'); d.className = 'cell reserve'; d.textContent = String(col_res[c][0] ?? ''); if (!d.textContent) d.classList.add('empty'); row.appendChild(d); }
                   grid.appendChild(row);
                 }
-                // Main rows
                 for (let rr = 0; rr < rows.length; rr++) {
                   const row = document.createElement('div'); row.className = 'row';
                   const resBot = document.createElement('div'); resBot.className = 'cell reserve'; resBot.textContent = String(row_res[rr][1] ?? ''); row.appendChild(resBot);
@@ -722,24 +759,17 @@
             if (solutionSteps) {
               if (steps.length > 0) {
                 const ol = document.createElement('ol');
-                steps.forEach((s) => {
-                  const li = document.createElement('li');
-                  li.textContent = s;
-                  ol.appendChild(li);
-                });
+                steps.forEach((s) => { const li = document.createElement('li'); li.textContent = s; ol.appendChild(li); });
                 solutionSteps.innerHTML = '';
                 solutionSteps.appendChild(ol);
               } else {
                 solutionSteps.innerHTML = '<p>No steps available.</p>';
               }
             }
+            if (giveUpChoiceModal) giveUpChoiceModal.style.display = 'none';
             if (solutionModal) { window.__SESSION_POLL_PAUSED__ = true; solutionModal.style.display = 'block'; }
-          } else {
-            alert('Failed to give up.');
           }
-        } catch (_) {
-          alert('Network error.');
-        }
+        } catch (_) {}
       });
     }
   </script>

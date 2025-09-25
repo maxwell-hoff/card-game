@@ -472,7 +472,7 @@
         if (t === 'col_up') return shiftColUp(p.col_index);
         if (t === 'swap') return swapInRow(p.row_index, p.i, p.j);
       }
-      function reset(){ current = cloneLayout(start); history.length = 0; render(); }
+      function reset(){ /* disabled */ }
 
       // Low-level transforms (match Python semantics)
       function shiftRowRight(r){
@@ -531,10 +531,8 @@
       header.style.marginBottom = '6px';
       const moveSpan = document.createElement('span');
       const statusSpan = document.createElement('span'); statusSpan.style.marginLeft = '10px';
-      const btnReset = document.createElement('button'); btnReset.textContent = 'Reset'; btnReset.style.marginLeft = '6px';
-      header.appendChild(moveSpan); header.appendChild(statusSpan); header.appendChild(btnReset);
+      header.appendChild(moveSpan); header.appendChild(statusSpan);
       container.appendChild(header);
-      btnReset.addEventListener('click', (e) => { e.preventDefault(); reset(); });
 
       const outer = document.createElement('div'); outer.style.display = 'flex'; outer.style.alignItems = 'flex-start'; outer.style.gap = '8px';
       const grid = document.createElement('div'); grid.className = 'grid';

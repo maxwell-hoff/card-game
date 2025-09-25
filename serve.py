@@ -494,6 +494,58 @@ def create_app(db_path: str) -> Flask:
             layout = None
         return jsonify({"ok": True, "steps": steps, "layout": layout})
 
+    # Alias for quick mode front-end which posts to /quick/give_up
+    @app.route("/quick/give_up", methods=["POST"])
+    def quick_give_up():
+        # Reuse the same logic as /play/give_up
+        return play_give_up()
+
+    @app.route("/play/try_again", methods=["POST"])
+    def play_try_again():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        session_id = data.get("session_id")
+        try:
+            session_id = int(session_id)
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_session_id"}), 400
+        sess = get_session_by_id(conn, session_id)
+        if not sess:
+            return jsonify({"ok": False, "error": "session_not_found"}), 404
+        sid, puzzle_id, exp_turns, inviter_id, status, _completed_at, _started_at = sess
+        # Verify membership
+        members = get_session_members_with_names(conn, sid)
+        member_ids = [m[0] for m in members]
+        if current.get("id") not in ([inviter_id] + member_ids):
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+        # Only host can try again (as it creates a new session for the party)
+        if int(current.get("id")) != int(inviter_id):
+            return jsonify({"ok": False, "error": "only_host_can_try_again"}), 403
+        # Record a loss if still active, then complete the session
+        if status == 'active':
+            update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
+            complete_session(conn, sid)
+        # Clear readiness for ranked lobby
+        try:
+            lobby_clear_all_ready(conn, inviter_id, 'ranked')
+        except Exception:
+            pass
+        # Start a new session with the same puzzle and same party members
+        try:
+            new_session_id = create_game_session(
+                conn,
+                inviter_id=inviter_id,
+                puzzle_id=int(puzzle_id) if puzzle_id is not None else None,
+                expected_turns=int(exp_turns) if exp_turns is not None else None,
+                member_user_ids=member_ids,
+                mode='ranked',
+            )
+        except Exception as e:
+            return jsonify({"ok": False, "error": "failed_to_create_session"}), 500
+        return jsonify({"ok": True, "redirect_url": "/play?session_id=" + str(new_session_id)})
+
     # --- Invites API ---
     @app.route("/api/invites/create", methods=["POST"])
     def api_invites_create():

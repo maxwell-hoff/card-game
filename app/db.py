@@ -930,10 +930,11 @@ def update_session_result(
     seconds: Optional[int],
     user_id: Optional[int],
 ) -> None:
-    """Upsert results for all invitee members of this session (exclude host).
+    """Upsert results for all members of this session, including the host.
 
     Note: user_id parameter is ignored for attribution; results are attributed
-    to session members (non-inviter) so invited players receive the outcome.
+    to the session members list so that both inviter (host) and invitees
+    receive the outcome. This ensures solo sessions also record results.
     """
     cur = conn.cursor()
     # Determine mode, puzzle, and inviter for this session
@@ -949,8 +950,8 @@ def update_session_result(
     # Fetch session members
     cur.execute("SELECT user_id FROM game_session_members WHERE session_id = ?", (session_id,))
     member_rows = [int(r[0]) for r in cur.fetchall()]
-    # Attribute results only to invitees (exclude host)
-    target_user_ids = [uid for uid in member_rows if uid != sess_inviter_id]
+    # Attribute results to all members; ensure inviter is included even if not present in member rows
+    target_user_ids = list(dict.fromkeys(member_rows + ([sess_inviter_id] if sess_inviter_id is not None else [])))
 
     now = datetime.utcnow().isoformat()
     ranked_flag = 1 if sess_mode == 'ranked' else 0
