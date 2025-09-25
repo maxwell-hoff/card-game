@@ -68,6 +68,11 @@
 
     {% if requested and puzzle %}
       <p><a href="/play">← Back</a></p>
+      {% if host_id is defined %}
+        <div class="muted" style="margin-top:4px;">
+          Host: {{ host_id }}{% if is_host %} (you){% endif %}
+        </div>
+      {% endif %}
       <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
       <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
       <div class="grid" id="static-grid" style="display:none;">
@@ -119,6 +124,35 @@
       <div style="margin-top:8px;">
         <button id="give-up-btn" class="btn btn-danger">Give Up</button>
       </div>
+      <!-- Turn limit reached modal -->
+      <div id="limit-modal" class="modal-overlay" style="display:none; z-index: 9999;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3 style="margin:0;">Turn limit reached</h3>
+            <button id="limit-modal-close" class="btn">Close</button>
+          </div>
+          <p style="margin-top:8px;">You used all turns. Choose an option:</p>
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap: wrap;">
+            <button id="limit-try-again" class="btn btn-primary">Try again</button>
+            <button id="limit-new-puzzle" class="btn">New puzzle</button>
+            <button id="limit-show-solution" class="btn">Show solution</button>
+          </div>
+        </div>
+      </div>
+      <!-- Give up choice modal -->
+      <div id="giveup-choice-modal" class="modal-overlay" style="display:none; z-index: 9999;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3 style="margin:0;">Give up?</h3>
+            <button id="giveup-choice-close" class="btn">Close</button>
+          </div>
+          <p style="margin-top:8px;">Do you want to try again (counts as a loss) or show the solution?</p>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button id="try-again-btn" class="btn btn-primary">Try again</button>
+            <button id="show-solution-btn" class="btn">Show solution</button>
+          </div>
+        </div>
+      </div>
       <!-- Solution modal -->
       <div id="solution-modal" class="modal-overlay" style="display:none; z-index: 9999;">
         <div class="modal">
@@ -159,6 +193,35 @@
 
       function cloneLayout(L){ return { rows: L.rows.map(r=>r.slice()), row_reserves: L.row_reserves.map(rr=>rr.slice()), col_reserves: L.col_reserves.map(cr=>cr.slice()), opponent_row_index: Number(L.opponent_row_index||0) }; }
       function eq(a,b){ const eq2=(x,y)=>x.length===y.length&&x.every((v,i)=>v===y[i]); const eq2d=(x,y)=>x.length===y.length&&x.every((row,i)=>eq2(row,y[i])); return eq2d(a.rows,b.rows)&&eq2d(a.row_reserves,b.row_reserves)&&eq2d(a.col_reserves,b.col_reserves)&&a.opponent_row_index===b.opponent_row_index; }
+      function isSolvedByCriteria(L){
+        if (!L || !L.rows || !L.row_reserves || !L.col_reserves) return false;
+        const numRows = L.rows.length; const numCols = 5;
+        // 1) Any row same suit
+        for (let r=0; r<numRows; r++){
+          const suits = L.rows[r].map(code => String(code).slice(-1));
+          if (suits.length === numCols && new Set(suits).size === 1) return true;
+        }
+        // 2) Any column strictly ascending or strictly descending by rank
+        const rankOf1 = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
+        for (let c=0; c<numCols; c++){
+          const ranks = Array.from({length:numRows}, (_,r)=>rankOf1(L.rows[r][c]));
+          const asc = ranks.every((v,i,arr)=> i===0 || arr[i-1] < v);
+          const desc = ranks.every((v,i,arr)=> i===0 || arr[i-1] > v);
+          if (asc || desc) return true;
+        }
+        // 3) Opponent highest lower than ALL CARDS in all other rows
+        const opp = Number(L.opponent_row_index||0);
+        const rankOf2 = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
+        const oppHigh = Math.max(...L.rows[opp].map(rankOf2));
+        for (let r=0; r<numRows; r++){
+          if (r===opp) continue;
+          for (let c=0; c<numCols; c++) {
+            const rv = rankOf2(L.rows[r][c]);
+            if (!(oppHigh < rv)) return false;
+          }
+        }
+        return true;
+      }
 
       let current = cloneLayout(start);
       const history = [];
@@ -166,7 +229,7 @@
       const expectedTurns = Number(JSON.parse('{{ expected_turns | default(0) | tojson | safe }}'));
 
       function push(type, params){ history.push({type, params}); }
-      function reset(){ current = cloneLayout(start); history.length=0; render(); }
+      function reset(){ /* disabled */ }
 
       function rowRight(r){ r=+r; const top=current.row_reserves[r][0], bottom=current.row_reserves[r][1]; const arr=current.rows[r]; const rightmost=arr[arr.length-1]; for(let k=arr.length-1;k>=1;k--) arr[k]=arr[k-1]; arr[0]=top; current.row_reserves[r][0]=bottom; current.row_reserves[r][1]=rightmost; }
       function rowLeft(r){ r=+r; const top=current.row_reserves[r][0], bottom=current.row_reserves[r][1]; const arr=current.rows[r]; const leftmost=arr[0]; for(let k=0;k<arr.length-1;k++) arr[k]=arr[k+1]; arr[arr.length-1]=bottom; current.row_reserves[r][0]=leftmost; current.row_reserves[r][1]=top; }
@@ -177,10 +240,8 @@
 
       const header=document.createElement('div'); header.style.marginBottom='6px';
       const moveSpan=document.createElement('span'); const statusSpan=document.createElement('span'); statusSpan.style.marginLeft='10px';
-      const btnReset=document.createElement('button'); btnReset.textContent='Reset'; btnReset.style.marginLeft='6px';
-      header.appendChild(moveSpan); header.appendChild(statusSpan); header.appendChild(btnReset);
+      header.appendChild(moveSpan); header.appendChild(statusSpan);
       container.appendChild(header);
-      btnReset.addEventListener('click', (e)=>{ e.preventDefault(); reset(); });
 
       const grid=document.createElement('div'); grid.className='grid'; container.appendChild(grid);
       let selected=null;
@@ -195,6 +256,11 @@
         const numPlayers = Math.max(0, current.rows.length - 1);
         const eligibleRow = numPlayers > 0 ? (1 + (history.length % numPlayers)) : null;
 
+        // Determine if current viewer is host; only host can act
+        const HOST_ID = Number(JSON.parse('{{ host_id | default(None) | tojson | safe }}'));
+        const MY_ID = Number(window.__SESSION_USER_ID__ || 0);
+        const isHost = (HOST_ID && MY_ID && Number(HOST_ID) === Number(MY_ID));
+
         grid.innerHTML='';
         // Column up controls ABOVE reserves
         { const row=document.createElement('div'); row.className='row';
@@ -207,7 +273,8 @@
           for(let c=0;c<5;c++){
             const btn=document.createElement('button'); btn.textContent='↑'; btn.style.width='100%'; btn.style.height='100%';
             const wrap=document.createElement('div'); wrap.className='cell'; wrap.appendChild(btn);
-            btn.addEventListener('click', (e)=>{ e.preventDefault(); push('col_up',{col_index:c}); colUp(c); render(); });
+            btn.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('col_up',{col_index:c}); colUp(c); render(); });
+            if (!isHost) { btn.disabled = true; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
             row.appendChild(wrap);
           }
           // Right control spacer
@@ -249,7 +316,7 @@
           // Left control at far left of row
           const leftWrap=document.createElement('div'); leftWrap.className='cell'; leftWrap.style.padding='0 4px';
           const btnLeft=document.createElement('button'); btnLeft.textContent='←'; btnLeft.style.width='100%'; btnLeft.style.height='100%';
-          btnLeft.addEventListener('click', (e)=>{ e.preventDefault(); push('row_left', { row_index:r }); rowLeft(r); render(); });
+          btnLeft.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('row_left', { row_index:r }); rowLeft(r); render(); });
           leftWrap.appendChild(btnLeft); row.appendChild(leftWrap);
 
           // Row reserves
@@ -263,6 +330,7 @@
               cell.style.cursor='pointer';
               cell.addEventListener('click', (e)=>{
                 e.preventDefault();
+                if (!isHost) return;
                 if (!selected) { selected = { r, c }; cell.style.outline='2px solid #06c'; return; }
                 const sr=selected.r, sc=selected.c; const prev=grid.querySelector('[data-sel=\"1\"]'); if (prev) { prev.removeAttribute('data-sel'); prev.style.outline=''; }
                 selected = null;
@@ -276,9 +344,9 @@
           // Right control on far right
           const rightWrap=document.createElement('div'); rightWrap.className='cell'; rightWrap.style.padding='0 4px';
           const btnRight=document.createElement('button'); btnRight.textContent='→'; btnRight.style.width='100%'; btnRight.style.height='100%';
-          btnRight.addEventListener('click', (e)=>{ e.preventDefault(); push('row_right', { row_index:r }); rowRight(r); render(); });
+          btnRight.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('row_right', { row_index:r }); rowRight(r); render(); });
           rightWrap.appendChild(btnRight); row.appendChild(rightWrap);
-          if (r===opp || (eligibleRow !== null && r !== eligibleRow)) { btnLeft.disabled=true; btnRight.disabled=true; btnLeft.style.opacity='0.6'; btnRight.style.opacity='0.6'; }
+          if (!isHost || r===opp || (eligibleRow !== null && r !== eligibleRow)) { btnLeft.disabled=true; btnRight.disabled=true; btnLeft.style.opacity='0.6'; btnRight.style.opacity='0.6'; }
 
           grid.appendChild(row);
         }
@@ -292,16 +360,82 @@
           for(let c=0;c<5;c++){
             const btn=document.createElement('button'); btn.textContent='↓'; btn.style.width='100%'; btn.style.height='100%';
             const wrap=document.createElement('div'); wrap.className='cell'; wrap.appendChild(btn);
-            btn.addEventListener('click', (e)=>{ e.preventDefault(); push('col_down', { col_index:c }); colDown(c); render(); });
+            btn.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('col_down', { col_index:c }); colDown(c); render(); });
+            if (!isHost) { btn.disabled = true; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
             row.appendChild(wrap);
           }
           // Right control spacer
           d=document.createElement('div'); d.className='cell empty'; row.appendChild(d);
           grid.appendChild(row);
         }
+
+        // Auto-complete logic
+        if (done) {
+          try { form.submit(); return; } catch(_) {}
+        }
+        if (!done && Number.isFinite(expectedTurns) && expectedTurns > 0 && history.length >= expectedTurns) {
+          const limitModal = document.getElementById('limit-modal');
+          if (limitModal && isHost) {
+            limitModal.style.display = 'block';
+          }
+        }
       }
 
+      // Post action history for server validation
+      let actionsInput = form.querySelector('input[name="actions"]');
+      if (!actionsInput) { actionsInput = document.createElement('input'); actionsInput.type='hidden'; actionsInput.name='actions'; form.appendChild(actionsInput); }
+      form.addEventListener('submit', () => { try { actionsInput.value = JSON.stringify(history); } catch(_) {} });
+
       render();
+
+      // Hook up limit modal actions
+      (function initLimitModal(){
+        const limitModal = document.getElementById('limit-modal');
+        if (!limitModal) return;
+        const closeBtn = document.getElementById('limit-modal-close');
+        const tryAgainBtn2 = document.getElementById('limit-try-again');
+        const newPuzzleBtn = document.getElementById('limit-new-puzzle');
+        const showSolBtn2 = document.getElementById('limit-show-solution');
+        if (closeBtn) closeBtn.addEventListener('click', () => { limitModal.style.display = 'none'; });
+        if (tryAgainBtn2) tryAgainBtn2.addEventListener('click', async (e) => {
+          e.preventDefault();
+          try {
+            const sessionIdInput = document.querySelector('input[name="session_id"]');
+            const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+            if (!sessionId) return;
+            const r = await fetch('/play/try_again', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+            const j = await r.json().catch(() => null);
+            if (j && j.ok && j.redirect_url) { location.href = j.redirect_url; }
+          } catch(_) {}
+        });
+        if (newPuzzleBtn) newPuzzleBtn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          try {
+            const sessionIdInput = document.querySelector('input[name="session_id"]');
+            const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+            if (!sessionId) return;
+            const r = await fetch('/play/new_puzzle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+            const j = await r.json().catch(() => null);
+            if (j && j.ok && j.redirect_url) { location.href = j.redirect_url; }
+          } catch(_) {}
+        });
+        if (showSolBtn2) showSolBtn2.addEventListener('click', async (e) => {
+          e.preventDefault();
+          try {
+            const sessionIdInput = document.querySelector('input[name="session_id"]');
+            const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+            if (!sessionId) return;
+            const r = await fetch('/play/give_up', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+            const j = await r.json().catch(() => null);
+            if (j && j.ok) {
+              const solutionModal = document.getElementById('solution-modal');
+              const stepsEl = document.getElementById('solution-steps');
+              if (stepsEl) stepsEl.innerHTML = (Array.isArray(j.steps) ? j.steps.map(s => `<div>${String(s)}</div>`).join('') : '<p>No steps.</p>');
+              if (solutionModal) solutionModal.style.display = 'block';
+            }
+          } catch(_) {}
+        });
+      })();
     })();
 
     // Poll session status so all players exit when any finishes
@@ -361,6 +495,43 @@
       const lobbyStatus = document.getElementById('lobby-status');
       let isReady = false;
       let pollTimer = null;
+      // Block auto-redirect briefly on back/forward navigations
+      let redirectBlockUntilTs = 0;
+      try {
+        const navEntries = (performance && performance.getEntriesByType) ? performance.getEntriesByType('navigation') : null;
+        const navType = navEntries && navEntries[0] ? navEntries[0].type : (performance && performance.navigation && performance.navigation.type === 2 ? 'back_forward' : '');
+        const stored = parseInt((localStorage.getItem('lobbyRedirectBlockUntil') || '0'), 10) || 0;
+        redirectBlockUntilTs = Math.max(stored, Number(window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ || 0) || 0);
+        const isBackForward = navType === 'back_forward';
+        if (isBackForward) {
+          redirectBlockUntilTs = Date.now() + 12000; // 12s grace
+          window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ = redirectBlockUntilTs;
+          localStorage.setItem('lobbyRedirectBlockUntil', String(redirectBlockUntilTs));
+          // Add noredirect=1 to URL to ensure no auto-redirect while user navigates back
+          try {
+            const url = new URL(location.href);
+            url.searchParams.set('noredirect', '1');
+            history.replaceState(history.state, '', url.toString());
+          } catch(_) {}
+        }
+        window.addEventListener('pageshow', (e) => {
+          if (e && e.persisted) {
+            const ts = Date.now() + 12000;
+            redirectBlockUntilTs = ts;
+            window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ = ts;
+            try { localStorage.setItem('lobbyRedirectBlockUntil', String(ts)); } catch(_) {}
+            try {
+              const url = new URL(location.href);
+              url.searchParams.set('noredirect', '1');
+              history.replaceState(history.state, '', url.toString());
+            } catch(_) {}
+          }
+        });
+      } catch (_) {}
+
+      function hasNoRedirectParam() {
+        try { return new URLSearchParams(location.search).get('noredirect') === '1'; } catch(_) { return false; }
+      }
 
       if (playersInput && playersCountSpan) {
         const sync = () => { const v = Math.max(1, Math.min(5, parseInt(playersInput.value || '1', 10) || 1)); playersCountSpan.textContent = String(v); };
@@ -473,8 +644,19 @@
           const currentSessionInput = document.querySelector('input[name="session_id"]');
           const currentSessionId = currentSessionInput ? Number(currentSessionInput.value) : null;
           if (j.active_session_id && (!currentSessionId || Number(j.active_session_id) !== currentSessionId)) {
-            location.href = '/play?session_id=' + String(j.active_session_id);
-            return;
+            const blockUntil = Math.max(
+              Number(window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ || 0),
+              parseInt((localStorage.getItem('lobbyRedirectBlockUntil') || '0'), 10) || 0
+            );
+            const skipByParam = hasNoRedirectParam();
+            if (!skipByParam && Date.now() >= blockUntil) {
+              try { localStorage.removeItem('lobbyRedirectBlockUntil'); } catch(_) {}
+              location.href = '/play?session_id=' + String(j.active_session_id);
+              return;
+            } else if (lobbyStatus) {
+              const href = '/play?session_id=' + String(j.active_session_id);
+              lobbyStatus.innerHTML = 'Session ready. <a href="' + href + '">Resume</a> (auto-redirect paused)';
+            }
           }
         } catch (_) {}
         finally {
@@ -556,6 +738,10 @@
     const solutionSteps = document.getElementById('solution-steps');
     const solutionInitial = document.getElementById('solution-initial');
     const solutionModalClose = document.getElementById('solution-modal-close');
+    const giveUpChoiceModal = document.getElementById('giveup-choice-modal');
+    const giveUpChoiceClose = document.getElementById('giveup-choice-close');
+    const tryAgainBtn = document.getElementById('try-again-btn');
+    const showSolutionBtn = document.getElementById('show-solution-btn');
     if (solutionModalClose && solutionModal) {
       solutionModalClose.addEventListener('click', () => {
         solutionModal.style.display = 'none';
@@ -564,9 +750,34 @@
       });
     }
     if (giveUpBtn) {
-      giveUpBtn.addEventListener('click', async (e) => {
+      giveUpBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        if (!confirm('Give up and record a loss for this game?')) return;
+        if (giveUpChoiceModal) giveUpChoiceModal.style.display = 'block';
+      });
+    }
+    if (giveUpChoiceClose && giveUpChoiceModal) {
+      giveUpChoiceClose.addEventListener('click', () => {
+        giveUpChoiceModal.style.display = 'none';
+      });
+    }
+    if (tryAgainBtn) {
+      tryAgainBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+          const sessionIdInput = document.querySelector('input[name="session_id"]');
+          const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+          if (!sessionId) return;
+          const r = await fetch('/play/try_again', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+          const j = await r.json().catch(() => null);
+          if (j && j.ok && j.redirect_url) {
+            location.href = j.redirect_url;
+          }
+        } catch (_) {}
+      });
+    }
+    if (showSolutionBtn) {
+      showSolutionBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
         try {
           const sessionIdInput = document.querySelector('input[name="session_id"]');
           const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
@@ -579,7 +790,6 @@
             const layout = j.layout || null;
             if (solutionInitial) {
               if (layout && layout.rows && layout.row_reserves && layout.col_reserves) {
-                // Render initial layout using same grid markup
                 const rows = layout.rows;
                 const row_res = layout.row_reserves;
                 const col_res = layout.col_reserves;
@@ -591,7 +801,6 @@
                 container.appendChild(title);
                 const grid = document.createElement('div');
                 grid.className = 'grid';
-                // Bottom reserves row
                 {
                   const row = document.createElement('div'); row.className = 'row';
                   let cell = document.createElement('div'); cell.className = 'cell reserve empty'; row.appendChild(cell);
@@ -599,7 +808,6 @@
                   for (let c = 0; c < 5; c++) { const d = document.createElement('div'); d.className = 'cell reserve'; d.textContent = String(col_res[c][1] ?? ''); if (!d.textContent) d.classList.add('empty'); row.appendChild(d); }
                   grid.appendChild(row);
                 }
-                // Top reserves row
                 {
                   const row = document.createElement('div'); row.className = 'row';
                   let cell = document.createElement('div'); cell.className = 'cell reserve empty'; row.appendChild(cell);
@@ -607,7 +815,6 @@
                   for (let c = 0; c < 5; c++) { const d = document.createElement('div'); d.className = 'cell reserve'; d.textContent = String(col_res[c][0] ?? ''); if (!d.textContent) d.classList.add('empty'); row.appendChild(d); }
                   grid.appendChild(row);
                 }
-                // Main rows
                 for (let rr = 0; rr < rows.length; rr++) {
                   const row = document.createElement('div'); row.className = 'row';
                   const resBot = document.createElement('div'); resBot.className = 'cell reserve'; resBot.textContent = String(row_res[rr][1] ?? ''); row.appendChild(resBot);
@@ -627,24 +834,17 @@
             if (solutionSteps) {
               if (steps.length > 0) {
                 const ol = document.createElement('ol');
-                steps.forEach((s) => {
-                  const li = document.createElement('li');
-                  li.textContent = s;
-                  ol.appendChild(li);
-                });
+                steps.forEach((s) => { const li = document.createElement('li'); li.textContent = s; ol.appendChild(li); });
                 solutionSteps.innerHTML = '';
                 solutionSteps.appendChild(ol);
               } else {
                 solutionSteps.innerHTML = '<p>No steps available.</p>';
               }
             }
+            if (giveUpChoiceModal) giveUpChoiceModal.style.display = 'none';
             if (solutionModal) { window.__SESSION_POLL_PAUSED__ = true; solutionModal.style.display = 'block'; }
-          } else {
-            alert('Failed to give up.');
           }
-        } catch (_) {
-          alert('Network error.');
-        }
+        } catch (_) {}
       });
     }
   </script>
