@@ -180,14 +180,16 @@
           const desc = ranks.every((v,i,arr)=> i===0 || arr[i-1] > v);
           if (asc || desc) return true;
         }
-        // 3) Opponent highest lower than all others
+        // 3) Opponent highest lower than ALL CARDS in all other rows
         const opp = Number(L.opponent_row_index||0);
         const rankOf2 = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
         const oppHigh = Math.max(...L.rows[opp].map(rankOf2));
         for (let r=0; r<numRows; r++){
           if (r===opp) continue;
-          const otherHigh = Math.max(...L.rows[r].map(rankOf2));
-          if (!(oppHigh < otherHigh)) return false;
+          for (let c=0; c<numCols; c++) {
+            const rv = rankOf2(L.rows[r][c]);
+            if (!(oppHigh < rv)) return false;
+          }
         }
         return true;
       }
@@ -219,7 +221,7 @@
 
       function render(){
         moveSpan.textContent = `Moves: ${history.length}${Number.isFinite(expectedTurns) ? ' / ' + expectedTurns : ''}`;
-        const done = isSolvedByCriteria(current);
+        const done = eq(current, solved);
         statusSpan.textContent = done ? 'Solved!' : '';
         try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.checked = done; } catch(_) {}
 

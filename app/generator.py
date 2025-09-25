@@ -252,15 +252,15 @@ def is_layout_success(layout: Layout) -> bool:
         desc = all(ranks[i] > ranks[i+1] for i in range(len(ranks)-1))
         if asc or desc:
             return True
-    # 3) Opponent row highest lower than all others
+    # 3) Opponent row highest lower than ALL CARDS in all other rows
     opp = layout.opponent_row_index
     opp_high, _ = layout.find_highest_in_row(opp)
     for r in range(num_rows):
         if r == opp:
             continue
-        other_high, _ = layout.find_highest_in_row(r)
-        if not (opp_high < other_high):
-            return False
+        for code in layout.rows[r]:
+            if Card.from_code(code).rank <= opp_high:
+                return False
     return True
 
 
