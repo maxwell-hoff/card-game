@@ -577,35 +577,55 @@
                 // Main rows
                 for (let rr = 0; rr < rows.length; rr++) {
                   const row = document.createElement('div'); row.className = 'row';
-                  const resBot = document.createElement('div'); resBot.className = 'cell reserve'; resBot.textContent = String(row_res[rr][1] ?? ''); row.appendChild(resBot);
-                  const resTop = document.createElement('div'); resTop.className = 'cell reserve'; resTop.textContent = String(row_res[rr][0] ?? ''); row.appendChild(resTop);
-                  for (let cc = 0; cc < 5; cc++) {
-                    const d = document.createElement('div'); d.className = 'cell' + (rr === opp ? ' opponent' : ''); d.textContent = String(rows[rr][cc] ?? ''); row.appendChild(d);
-                  }
+                  let cell = document.createElement('div'); cell.className = 'cell reserve'; cell.textContent = String(row_res[rr][1] ?? ''); row.appendChild(cell);
+                  cell = document.createElement('div'); cell.className = 'cell reserve'; cell.textContent = String(row_res[rr][0] ?? ''); row.appendChild(cell);
+                  for (let cc = 0; cc < 5; cc++) { const d = document.createElement('div'); d.className = 'cell' + (rr===opp ? ' opponent' : ''); d.textContent = String(rows[rr][cc] ?? ''); row.appendChild(d); }
                   grid.appendChild(row);
                 }
                 solutionInitial.innerHTML = '';
-                solutionInitial.appendChild(title);
+                solutionInitial.appendChild(container);
                 solutionInitial.appendChild(grid);
-              } else {
-                solutionInitial.innerHTML = '';
               }
             }
             if (solutionSteps) {
-              if (steps.length > 0) {
-                const ol = document.createElement('ol');
-                steps.forEach((s) => { const li = document.createElement('li'); li.textContent = s; ol.appendChild(li); });
-                solutionSteps.innerHTML = '';
-                solutionSteps.appendChild(ol);
-              } else {
-                solutionSteps.innerHTML = '<p>No steps available.</p>';
-              }
+              solutionSteps.innerHTML = steps.map(s => '<div>' + String(s) + '</div>').join('');
             }
-            if (giveUpChoiceModal) giveUpChoiceModal.style.display = 'none';
-            if (solutionModal) { window.__SESSION_POLL_PAUSED__ = true; solutionModal.style.display = 'block'; }
+            if (solutionModal) solutionModal.style.display = 'block';
+            try { window.__SESSION_POLL_PAUSED__ = true; } catch (_) {}
           }
         } catch (_) {}
       });
     }
+
+    // Auto-complete at turn limit (host only)
+    (function initLimitAutoComplete(){
+      try {
+        const expectedTurns = Number(JSON.parse('{{ expected_turns | default(0) | tojson | safe }}'));
+        const form = document.getElementById('report-form');
+        const moveSpan = document.querySelector('#interactive-play span');
+        const HOST_ID = Number(JSON.parse('{{ host_id | default(None) | tojson | safe }}'));
+        const MY_ID = Number(window.__SESSION_USER_ID__ || 0);
+        const isHost = (HOST_ID && MY_ID && Number(HOST_ID) === Number(MY_ID));
+        if (!form || !Number.isFinite(expectedTurns) || expectedTurns <= 0) return;
+        const sessionIdInput = document.querySelector('input[name="session_id"]');
+        const sid = sessionIdInput ? Number(sessionIdInput.value) : null;
+        function checkLimit(){
+          try {
+            // history length is reflected in the Moves: X / Y text; parse X
+            const el = moveSpan;
+            if (!el) return;
+            const txt = el.textContent || '';
+            const m = txt.match(/Moves:\s*(\d+)/i);
+            const moves = m ? parseInt(m[1], 10) : 0;
+            const isSolved = !!(form.querySelector('input[name="solved"]')?.checked);
+            if (!isSolved && isHost && moves >= expectedTurns) {
+              const modal = document.getElementById('giveup-choice-modal');
+              if (modal) modal.style.display = 'block';
+            }
+          } catch (_) {}
+        }
+        setInterval(checkLimit, 500);
+      } catch (_) {}
+    })();
   </script>
 {% endblock %}

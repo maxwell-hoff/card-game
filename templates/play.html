@@ -124,6 +124,21 @@
       <div style="margin-top:8px;">
         <button id="give-up-btn" class="btn btn-danger">Give Up</button>
       </div>
+      <!-- Turn limit reached modal -->
+      <div id="limit-modal" class="modal-overlay" style="display:none; z-index: 9999;">
+        <div class="modal">
+          <div class="modal-header">
+            <h3 style="margin:0;">Turn limit reached</h3>
+            <button id="limit-modal-close" class="btn">Close</button>
+          </div>
+          <p style="margin-top:8px;">You used all turns. Choose an option:</p>
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap: wrap;">
+            <button id="limit-try-again" class="btn btn-primary">Try again</button>
+            <button id="limit-new-puzzle" class="btn">New puzzle</button>
+            <button id="limit-show-solution" class="btn">Show solution</button>
+          </div>
+        </div>
+      </div>
       <!-- Give up choice modal -->
       <div id="giveup-choice-modal" class="modal-overlay" style="display:none; z-index: 9999;">
         <div class="modal">
@@ -353,6 +368,17 @@
           d=document.createElement('div'); d.className='cell empty'; row.appendChild(d);
           grid.appendChild(row);
         }
+
+        // Auto-complete logic
+        if (done) {
+          try { form.submit(); return; } catch(_) {}
+        }
+        if (!done && Number.isFinite(expectedTurns) && expectedTurns > 0 && history.length >= expectedTurns) {
+          const limitModal = document.getElementById('limit-modal');
+          if (limitModal && isHost) {
+            limitModal.style.display = 'block';
+          }
+        }
       }
 
       // Post action history for server validation
@@ -361,6 +387,55 @@
       form.addEventListener('submit', () => { try { actionsInput.value = JSON.stringify(history); } catch(_) {} });
 
       render();
+
+      // Hook up limit modal actions
+      (function initLimitModal(){
+        const limitModal = document.getElementById('limit-modal');
+        if (!limitModal) return;
+        const closeBtn = document.getElementById('limit-modal-close');
+        const tryAgainBtn2 = document.getElementById('limit-try-again');
+        const newPuzzleBtn = document.getElementById('limit-new-puzzle');
+        const showSolBtn2 = document.getElementById('limit-show-solution');
+        if (closeBtn) closeBtn.addEventListener('click', () => { limitModal.style.display = 'none'; });
+        if (tryAgainBtn2) tryAgainBtn2.addEventListener('click', async (e) => {
+          e.preventDefault();
+          try {
+            const sessionIdInput = document.querySelector('input[name="session_id"]');
+            const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+            if (!sessionId) return;
+            const r = await fetch('/play/try_again', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+            const j = await r.json().catch(() => null);
+            if (j && j.ok && j.redirect_url) { location.href = j.redirect_url; }
+          } catch(_) {}
+        });
+        if (newPuzzleBtn) newPuzzleBtn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          try {
+            const sessionIdInput = document.querySelector('input[name="session_id"]');
+            const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+            if (!sessionId) return;
+            const r = await fetch('/play/new_puzzle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+            const j = await r.json().catch(() => null);
+            if (j && j.ok && j.redirect_url) { location.href = j.redirect_url; }
+          } catch(_) {}
+        });
+        if (showSolBtn2) showSolBtn2.addEventListener('click', async (e) => {
+          e.preventDefault();
+          try {
+            const sessionIdInput = document.querySelector('input[name="session_id"]');
+            const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+            if (!sessionId) return;
+            const r = await fetch('/play/give_up', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) });
+            const j = await r.json().catch(() => null);
+            if (j && j.ok) {
+              const solutionModal = document.getElementById('solution-modal');
+              const stepsEl = document.getElementById('solution-steps');
+              if (stepsEl) stepsEl.innerHTML = (Array.isArray(j.steps) ? j.steps.map(s => `<div>${String(s)}</div>`).join('') : '<p>No steps.</p>');
+              if (solutionModal) solutionModal.style.display = 'block';
+            }
+          } catch(_) {}
+        });
+      })();
     })();
 
     // Poll session status so all players exit when any finishes

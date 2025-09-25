@@ -546,6 +546,76 @@ def create_app(db_path: str) -> Flask:
             return jsonify({"ok": False, "error": "failed_to_create_session"}), 500
         return jsonify({"ok": True, "redirect_url": "/play?session_id=" + str(new_session_id)})
 
+    @app.route("/play/new_puzzle", methods=["POST"])
+    def play_new_puzzle():
+        current = session.get("user")
+        if not current:
+            return jsonify({"ok": False, "error": "not_authenticated"}), 401
+        data = request.get_json(silent=True) or {}
+        session_id = data.get("session_id")
+        try:
+            session_id = int(session_id)
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_session_id"}), 400
+        sess = get_session_by_id(conn, session_id)
+        if not sess:
+            return jsonify({"ok": False, "error": "session_not_found"}), 404
+        sid, _puzzle_id, _exp_turns, inviter_id, status, _completed_at, _started_at = sess
+        # Verify membership
+        members = get_session_members_with_names(conn, sid)
+        member_ids = [m[0] for m in members]
+        if current.get("id") not in ([inviter_id] + member_ids):
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+        # Only host can start a new puzzle
+        if int(current.get("id")) != int(inviter_id):
+            return jsonify({"ok": False, "error": "only_host_can_new_puzzle"}), 403
+        # Record a loss if still active, then complete the session
+        if status == 'active':
+            try:
+                update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
+            except Exception:
+                pass
+            complete_session(conn, sid)
+        # Clear readiness for ranked lobby
+        try:
+            lobby_clear_all_ready(conn, inviter_id, 'ranked')
+        except Exception:
+            pass
+        # Choose a new puzzle using inviter's ELO and party size
+        try:
+            elo_cfg = EloConfig()
+            ranked_rows = get_user_results_with_puzzle_meta(conn, inviter_id)
+            user_elo = compute_user_elo(ranked_rows, elo_cfg)
+            diff_cfg = RankedDifficultyConfig()
+            level_choice = select_ranked_level(ranked_rows, user_elo, diff_cfg)
+            exclude_ids = get_user_ranked_history_puzzle_ids(conn, inviter_id)
+            players_count = max(1, min(5, len(members)))
+            puzzle = get_random_puzzle_for_level_and_players_excluding(conn, level_choice, players_count, exclude_ids)
+            if not puzzle:
+                tried = set([level_choice])
+                for delta in [1, -1, 2, -2, 3, -3]:
+                    cand = max(diff_cfg.min_level, min(diff_cfg.max_level, level_choice + delta))
+                    if cand in tried:
+                        continue
+                    tried.add(cand)
+                    puzzle = get_random_puzzle_for_level_and_players_excluding(conn, cand, players_count, exclude_ids)
+                    if puzzle:
+                        break
+            if not puzzle:
+                return jsonify({"ok": False, "error": "no_puzzle_available"}), 500
+            # Create new session with same party (exclude inviter from member list)
+            new_session_id = create_game_session(
+                conn,
+                inviter_id=inviter_id,
+                puzzle_id=puzzle.id,
+                expected_turns=puzzle.num_actions,
+                member_user_ids=[uid for uid in member_ids if uid != inviter_id],
+                mode='ranked',
+            )
+            return jsonify({"ok": True, "redirect_url": "/play?session_id=" + str(new_session_id)})
+        except Exception:
+            return jsonify({"ok": False, "error": "failed_to_create_session"}), 500
+
     # --- Invites API ---
     @app.route("/api/invites/create", methods=["POST"])
     def api_invites_create():
