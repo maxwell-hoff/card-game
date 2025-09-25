@@ -683,11 +683,6 @@ def create_game_session(
             "INSERT OR IGNORE INTO game_session_members (session_id, user_id) VALUES (?, ?)",
             (session_id, uid),
         )
-    # Record a started attempt as unsolved to affect stats until solved
-    cur.execute(
-        "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, ranked, created_at, session_id) VALUES (?, NULL, 0, NULL, ?, ?, ?)",
-        (puzzle_id, 1 if mode == 'ranked' else 0, now, session_id),
-    )
     conn.commit()
     return session_id
 
@@ -935,27 +930,45 @@ def update_session_result(
     seconds: Optional[int],
     user_id: Optional[int],
 ) -> None:
-    """Update the single game_results row tied to this session. If none exists, insert it."""
+    """Upsert results for all invitee members of this session (exclude host).
+
+    Note: user_id parameter is ignored for attribution; results are attributed
+    to session members (non-inviter) so invited players receive the outcome.
+    """
     cur = conn.cursor()
-    # Determine mode and puzzle for this session
-    cur.execute("SELECT mode, puzzle_id FROM game_sessions WHERE id = ?", (session_id,))
+    # Determine mode, puzzle, and inviter for this session
+    cur.execute("SELECT mode, puzzle_id, inviter_id FROM game_sessions WHERE id = ?", (session_id,))
     sess_row = cur.fetchone()
     sess_mode = str(sess_row[0]) if sess_row else 'quick'
     sess_puzzle_id = int(sess_row[1]) if sess_row else None
-    cur.execute("SELECT id FROM game_results WHERE session_id = ?", (session_id,))
-    row = cur.fetchone()
+    sess_inviter_id = int(sess_row[2]) if sess_row else None
+
+    if sess_puzzle_id is None:
+        return
+
+    # Fetch session members
+    cur.execute("SELECT user_id FROM game_session_members WHERE session_id = ?", (session_id,))
+    member_rows = [int(r[0]) for r in cur.fetchall()]
+    # Attribute results only to invitees (exclude host)
+    target_user_ids = [uid for uid in member_rows if uid != sess_inviter_id]
+
     now = datetime.utcnow().isoformat()
-    if row:
-        cur.execute(
-            "UPDATE game_results SET solved = ?, seconds = ?, user_id = ?, ranked = ?, created_at = ? WHERE id = ?",
-            (1 if solved else 0, seconds, user_id, 1 if sess_mode == 'ranked' else 0, now, int(row[0])),
-        )
-    else:
-        # fallback insert
-        cur.execute(
-            "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, ranked, created_at, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (sess_puzzle_id, user_id, 1 if solved else 0, seconds, 1 if sess_mode == 'ranked' else 0, now, session_id),
-        )
+    ranked_flag = 1 if sess_mode == 'ranked' else 0
+
+    for uid in target_user_ids:
+        # If a row exists for this session+uid, update it; otherwise insert
+        cur.execute("SELECT id FROM game_results WHERE session_id = ? AND user_id = ?", (session_id, uid))
+        row = cur.fetchone()
+        if row:
+            cur.execute(
+                "UPDATE game_results SET solved = ?, seconds = ?, ranked = ?, created_at = ? WHERE id = ?",
+                (1 if solved else 0, seconds, ranked_flag, now, int(row[0])),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO game_results (puzzle_id, user_id, solved, seconds, ranked, created_at, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (sess_puzzle_id, uid, 1 if solved else 0, seconds, ranked_flag, now, session_id),
+            )
     conn.commit()
 
 

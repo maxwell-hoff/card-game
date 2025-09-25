@@ -272,6 +272,8 @@ def create_app(db_path: str) -> Flask:
                 session_id=sess_id,
                 solved_layout=solved_layout,
                 elo=elo_value,
+                host_id=sess_inviter_id,
+                is_host=bool(inviter_id == sess_inviter_id),
             )
 
         # If not requested, show lobby and single resumable session if any
@@ -360,6 +362,8 @@ def create_app(db_path: str) -> Flask:
             session_id=session_id,
             solved_layout=solved_layout,
             elo=elo_value,
+            host_id=host_id,
+            is_host=True,
         )
 
     @app.route("/puzzle/<int:puzzle_id>")
@@ -395,15 +399,18 @@ def create_app(db_path: str) -> Flask:
         else:
             sid = None
         if sid:
-            update_session_result(conn, sid, solved=solved_flag, seconds=seconds_val, user_id=user_id)
-            if solved_flag:
-                complete_session(conn, sid)
-            # After completion or submit, always return to lobby and clear readiness
+            # Only host may submit results for a session
             cur = conn.cursor()
             cur.execute("SELECT inviter_id, mode FROM game_sessions WHERE id = ?", (sid,))
             r = cur.fetchone()
             inviter_id = int(r[0]) if r else None
             mode = str(r[1]) if r and r[1] else 'quick'
+            if not user_id or inviter_id is None or int(user_id) != int(inviter_id):
+                return redirect(url_for("play"))
+            update_session_result(conn, sid, solved=solved_flag, seconds=seconds_val, user_id=user_id)
+            if solved_flag:
+                complete_session(conn, sid)
+            # After completion or submit, always return to lobby and clear readiness
             if inviter_id:
                 try:
                     lobby_clear_all_ready(conn, inviter_id, mode)
@@ -438,6 +445,9 @@ def create_app(db_path: str) -> Flask:
         member_ids = [m[0] for m in members]
         if current.get("id") not in ([inviter_id] + member_ids):
             return jsonify({"ok": False, "error": "forbidden"}), 403
+        # Only host can give up to finalize the session
+        if int(current.get("id")) != int(inviter_id):
+            return jsonify({"ok": False, "error": "only_host_can_give_up"}), 403
         # Mark loss and complete
         update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
         complete_session(conn, sid)
@@ -910,6 +920,9 @@ def create_app(db_path: str) -> Flask:
         latest_inviter = get_latest_inviter_for_invitee_and_mode(conn, user_id, mode)
         if latest_inviter:
             inviter_id = latest_inviter
+        # Only host can start the game
+        if int(user_id) != int(inviter_id):
+            return jsonify({"ok": False, "error": "only_host_can_start"}), 403
         # Validate readiness
         inviter_display = inviter_display_name(conn, inviter_id)
         party_rows = get_party_for_inviter(conn, inviter_id, mode=mode)
@@ -971,17 +984,18 @@ def create_app(db_path: str) -> Flask:
         sess = get_session_by_id(conn, sid)
         if not sess:
             return jsonify({"ok": False, "error": "not_found"}), 404
-        # Fetch status and mode
+        # Fetch status, mode, and host (inviter)
         cur = conn.cursor()
-        cur.execute("SELECT status, mode FROM game_sessions WHERE id = ?", (sid,))
+        cur.execute("SELECT status, mode, inviter_id FROM game_sessions WHERE id = ?", (sid,))
         row = cur.fetchone()
         status = str(row[0]) if row else 'active'
         mode = str(row[1]) if row and row[1] else 'quick'
+        host_id = int(row[2]) if row and row[2] is not None else None
         # Determine if solved (any solved=1 in results for this session)
         cur.execute("SELECT MAX(solved) FROM game_results WHERE session_id = ?", (sid,))
         solved_row = cur.fetchone()
         solved_flag = bool(solved_row[0]) if solved_row and solved_row[0] is not None else False
-        return jsonify({"ok": True, "status": status, "mode": mode, "solved": solved_flag})
+        return jsonify({"ok": True, "status": status, "mode": mode, "solved": solved_flag, "host_id": host_id})
 
     return app
 

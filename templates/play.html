@@ -68,6 +68,11 @@
 
     {% if requested and puzzle %}
       <p><a href="/play">← Back</a></p>
+      {% if host_id is defined %}
+        <div class="muted" style="margin-top:4px;">
+          Host: {{ host_id }}{% if is_host %} (you){% endif %}
+        </div>
+      {% endif %}
       <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
       <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
       <div class="grid" id="static-grid" style="display:none;">
@@ -195,6 +200,11 @@
         const numPlayers = Math.max(0, current.rows.length - 1);
         const eligibleRow = numPlayers > 0 ? (1 + (history.length % numPlayers)) : null;
 
+        // Determine if current viewer is host; only host can act
+        const HOST_ID = Number(JSON.parse('{{ host_id | default(None) | tojson | safe }}'));
+        const MY_ID = Number(window.__SESSION_USER_ID__ || 0);
+        const isHost = (HOST_ID && MY_ID && Number(HOST_ID) === Number(MY_ID));
+
         grid.innerHTML='';
         // Column up controls ABOVE reserves
         { const row=document.createElement('div'); row.className='row';
@@ -207,7 +217,8 @@
           for(let c=0;c<5;c++){
             const btn=document.createElement('button'); btn.textContent='↑'; btn.style.width='100%'; btn.style.height='100%';
             const wrap=document.createElement('div'); wrap.className='cell'; wrap.appendChild(btn);
-            btn.addEventListener('click', (e)=>{ e.preventDefault(); push('col_up',{col_index:c}); colUp(c); render(); });
+            btn.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('col_up',{col_index:c}); colUp(c); render(); });
+            if (!isHost) { btn.disabled = true; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
             row.appendChild(wrap);
           }
           // Right control spacer
@@ -249,7 +260,7 @@
           // Left control at far left of row
           const leftWrap=document.createElement('div'); leftWrap.className='cell'; leftWrap.style.padding='0 4px';
           const btnLeft=document.createElement('button'); btnLeft.textContent='←'; btnLeft.style.width='100%'; btnLeft.style.height='100%';
-          btnLeft.addEventListener('click', (e)=>{ e.preventDefault(); push('row_left', { row_index:r }); rowLeft(r); render(); });
+          btnLeft.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('row_left', { row_index:r }); rowLeft(r); render(); });
           leftWrap.appendChild(btnLeft); row.appendChild(leftWrap);
 
           // Row reserves
@@ -263,6 +274,7 @@
               cell.style.cursor='pointer';
               cell.addEventListener('click', (e)=>{
                 e.preventDefault();
+                if (!isHost) return;
                 if (!selected) { selected = { r, c }; cell.style.outline='2px solid #06c'; return; }
                 const sr=selected.r, sc=selected.c; const prev=grid.querySelector('[data-sel=\"1\"]'); if (prev) { prev.removeAttribute('data-sel'); prev.style.outline=''; }
                 selected = null;
@@ -276,9 +288,9 @@
           // Right control on far right
           const rightWrap=document.createElement('div'); rightWrap.className='cell'; rightWrap.style.padding='0 4px';
           const btnRight=document.createElement('button'); btnRight.textContent='→'; btnRight.style.width='100%'; btnRight.style.height='100%';
-          btnRight.addEventListener('click', (e)=>{ e.preventDefault(); push('row_right', { row_index:r }); rowRight(r); render(); });
+          btnRight.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('row_right', { row_index:r }); rowRight(r); render(); });
           rightWrap.appendChild(btnRight); row.appendChild(rightWrap);
-          if (r===opp || (eligibleRow !== null && r !== eligibleRow)) { btnLeft.disabled=true; btnRight.disabled=true; btnLeft.style.opacity='0.6'; btnRight.style.opacity='0.6'; }
+          if (!isHost || r===opp || (eligibleRow !== null && r !== eligibleRow)) { btnLeft.disabled=true; btnRight.disabled=true; btnLeft.style.opacity='0.6'; btnRight.style.opacity='0.6'; }
 
           grid.appendChild(row);
         }
@@ -292,7 +304,8 @@
           for(let c=0;c<5;c++){
             const btn=document.createElement('button'); btn.textContent='↓'; btn.style.width='100%'; btn.style.height='100%';
             const wrap=document.createElement('div'); wrap.className='cell'; wrap.appendChild(btn);
-            btn.addEventListener('click', (e)=>{ e.preventDefault(); push('col_down', { col_index:c }); colDown(c); render(); });
+            btn.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('col_down', { col_index:c }); colDown(c); render(); });
+            if (!isHost) { btn.disabled = true; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
             row.appendChild(wrap);
           }
           // Right control spacer
@@ -361,6 +374,43 @@
       const lobbyStatus = document.getElementById('lobby-status');
       let isReady = false;
       let pollTimer = null;
+      // Block auto-redirect briefly on back/forward navigations
+      let redirectBlockUntilTs = 0;
+      try {
+        const navEntries = (performance && performance.getEntriesByType) ? performance.getEntriesByType('navigation') : null;
+        const navType = navEntries && navEntries[0] ? navEntries[0].type : (performance && performance.navigation && performance.navigation.type === 2 ? 'back_forward' : '');
+        const stored = parseInt((localStorage.getItem('lobbyRedirectBlockUntil') || '0'), 10) || 0;
+        redirectBlockUntilTs = Math.max(stored, Number(window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ || 0) || 0);
+        const isBackForward = navType === 'back_forward';
+        if (isBackForward) {
+          redirectBlockUntilTs = Date.now() + 12000; // 12s grace
+          window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ = redirectBlockUntilTs;
+          localStorage.setItem('lobbyRedirectBlockUntil', String(redirectBlockUntilTs));
+          // Add noredirect=1 to URL to ensure no auto-redirect while user navigates back
+          try {
+            const url = new URL(location.href);
+            url.searchParams.set('noredirect', '1');
+            history.replaceState(history.state, '', url.toString());
+          } catch(_) {}
+        }
+        window.addEventListener('pageshow', (e) => {
+          if (e && e.persisted) {
+            const ts = Date.now() + 12000;
+            redirectBlockUntilTs = ts;
+            window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ = ts;
+            try { localStorage.setItem('lobbyRedirectBlockUntil', String(ts)); } catch(_) {}
+            try {
+              const url = new URL(location.href);
+              url.searchParams.set('noredirect', '1');
+              history.replaceState(history.state, '', url.toString());
+            } catch(_) {}
+          }
+        });
+      } catch (_) {}
+
+      function hasNoRedirectParam() {
+        try { return new URLSearchParams(location.search).get('noredirect') === '1'; } catch(_) { return false; }
+      }
 
       if (playersInput && playersCountSpan) {
         const sync = () => { const v = Math.max(1, Math.min(5, parseInt(playersInput.value || '1', 10) || 1)); playersCountSpan.textContent = String(v); };
@@ -473,8 +523,19 @@
           const currentSessionInput = document.querySelector('input[name="session_id"]');
           const currentSessionId = currentSessionInput ? Number(currentSessionInput.value) : null;
           if (j.active_session_id && (!currentSessionId || Number(j.active_session_id) !== currentSessionId)) {
-            location.href = '/play?session_id=' + String(j.active_session_id);
-            return;
+            const blockUntil = Math.max(
+              Number(window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ || 0),
+              parseInt((localStorage.getItem('lobbyRedirectBlockUntil') || '0'), 10) || 0
+            );
+            const skipByParam = hasNoRedirectParam();
+            if (!skipByParam && Date.now() >= blockUntil) {
+              try { localStorage.removeItem('lobbyRedirectBlockUntil'); } catch(_) {}
+              location.href = '/play?session_id=' + String(j.active_session_id);
+              return;
+            } else if (lobbyStatus) {
+              const href = '/play?session_id=' + String(j.active_session_id);
+              lobbyStatus.innerHTML = 'Session ready. <a href="' + href + '">Resume</a> (auto-redirect paused)';
+            }
           }
         } catch (_) {}
         finally {
