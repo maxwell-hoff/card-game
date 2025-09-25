@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import os
 
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-from app.actions import humanize_actions_dicts
+from app.actions import humanize_actions_dicts, Action
 
 from app.db import (
     get_conn,
@@ -384,12 +384,32 @@ def create_app(db_path: str) -> Flask:
         if not session.get("user"):
             return redirect(url_for("index"))
         puzzle_id = int(request.form.get("puzzle_id"))
-        solved_flag = request.form.get("solved") == "1"
+        solved_flag = False
         seconds = request.form.get("seconds")
         players_filter = request.form.get("players_filter")
         turns_filter = request.form.get("turns_filter")
         session_id_q = request.form.get("session_id")
         seconds_val: Optional[int] = int(seconds) if seconds else None
+        actions_json = request.form.get("actions") or "[]"
+        # Recompute solved from actions applied to start layout
+        try:
+            sp = get_puzzle_by_id(conn, puzzle_id)
+            if sp:
+                start_layout = json.loads(sp.start_layout_json)
+                from app.models import Layout as _Layout
+                working = _Layout.from_dict(start_layout)
+                posted_actions = json.loads(actions_json)
+                if isinstance(posted_actions, list):
+                    for a in posted_actions:
+                        if isinstance(a, dict) and "type" in a and "params" in a:
+                            try:
+                                apply_action(working, Action.from_dict(a))
+                            except Exception:
+                                pass
+                from app.generator import is_layout_success
+                solved_flag = is_layout_success(working)
+        except Exception:
+            solved_flag = False
         user_id = (session.get("user") or {}).get("id")
         if session_id_q:
             try:

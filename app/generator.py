@@ -230,6 +230,40 @@ def apply_action(layout: Layout, action: Action) -> None:
         raise ValueError(f"Unknown action: {t}")
 
 
+def is_layout_success(layout: Layout) -> bool:
+    """Return True if the layout satisfies any win condition:
+    1) Any row is all the same suit (including opponent row)
+    2) Any column is strictly ascending or strictly descending by rank (Ace high)
+    3) Highest card in opponent row is lower than all cards in other rows
+    """
+    if not layout or not layout.rows:
+        return False
+    num_rows = layout.num_rows
+    num_cols = layout.num_cols
+    # 1) Row of five same suit
+    for r in range(num_rows):
+        suits = [Card.from_code(code).suit for code in layout.rows[r]]
+        if len(suits) == num_cols and len(set(suits)) == 1:
+            return True
+    # 2) Column strictly ascending or descending by rank
+    for c in range(num_cols):
+        ranks = [Card.from_code(layout.rows[r][c]).rank for r in range(num_rows)]
+        asc = all(ranks[i] < ranks[i+1] for i in range(len(ranks)-1))
+        desc = all(ranks[i] > ranks[i+1] for i in range(len(ranks)-1))
+        if asc or desc:
+            return True
+    # 3) Opponent row highest lower than all others
+    opp = layout.opponent_row_index
+    opp_high, _ = layout.find_highest_in_row(opp)
+    for r in range(num_rows):
+        if r == opp:
+            continue
+        other_high, _ = layout.find_highest_in_row(r)
+        if not (opp_high < other_high):
+            return False
+    return True
+
+
 def random_legal_action(layout: Layout, rng: random.Random, players: int, expected_player_row: Optional[int] = None) -> Action:
     choices = []
     # Row actions: optionally constrain to expected player's row

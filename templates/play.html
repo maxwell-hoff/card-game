@@ -164,6 +164,33 @@
 
       function cloneLayout(L){ return { rows: L.rows.map(r=>r.slice()), row_reserves: L.row_reserves.map(rr=>rr.slice()), col_reserves: L.col_reserves.map(cr=>cr.slice()), opponent_row_index: Number(L.opponent_row_index||0) }; }
       function eq(a,b){ const eq2=(x,y)=>x.length===y.length&&x.every((v,i)=>v===y[i]); const eq2d=(x,y)=>x.length===y.length&&x.every((row,i)=>eq2(row,y[i])); return eq2d(a.rows,b.rows)&&eq2d(a.row_reserves,b.row_reserves)&&eq2d(a.col_reserves,b.col_reserves)&&a.opponent_row_index===b.opponent_row_index; }
+      function isSolvedByCriteria(L){
+        if (!L || !L.rows || !L.row_reserves || !L.col_reserves) return false;
+        const numRows = L.rows.length; const numCols = 5;
+        // 1) Any row same suit
+        for (let r=0; r<numRows; r++){
+          const suits = L.rows[r].map(code => String(code).slice(-1));
+          if (suits.length === numCols && new Set(suits).size === 1) return true;
+        }
+        // 2) Any column strictly ascending or strictly descending by rank
+        const rankOf1 = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
+        for (let c=0; c<numCols; c++){
+          const ranks = Array.from({length:numRows}, (_,r)=>rankOf1(L.rows[r][c]));
+          const asc = ranks.every((v,i,arr)=> i===0 || arr[i-1] < v);
+          const desc = ranks.every((v,i,arr)=> i===0 || arr[i-1] > v);
+          if (asc || desc) return true;
+        }
+        // 3) Opponent highest lower than all others
+        const opp = Number(L.opponent_row_index||0);
+        const rankOf2 = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
+        const oppHigh = Math.max(...L.rows[opp].map(rankOf2));
+        for (let r=0; r<numRows; r++){
+          if (r===opp) continue;
+          const otherHigh = Math.max(...L.rows[r].map(rankOf2));
+          if (!(oppHigh < otherHigh)) return false;
+        }
+        return true;
+      }
 
       let current = cloneLayout(start);
       const history = [];
@@ -192,7 +219,7 @@
 
       function render(){
         moveSpan.textContent = `Moves: ${history.length}${Number.isFinite(expectedTurns) ? ' / ' + expectedTurns : ''}`;
-        const done = eq(current, solved);
+        const done = isSolvedByCriteria(current);
         statusSpan.textContent = done ? 'Solved!' : '';
         try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.checked = done; } catch(_) {}
 
@@ -313,6 +340,11 @@
           grid.appendChild(row);
         }
       }
+
+      // Post action history for server validation
+      let actionsInput = form.querySelector('input[name="actions"]');
+      if (!actionsInput) { actionsInput = document.createElement('input'); actionsInput.type='hidden'; actionsInput.name='actions'; form.appendChild(actionsInput); }
+      form.addEventListener('submit', () => { try { actionsInput.value = JSON.stringify(history); } catch(_) {} });
 
       render();
     })();
