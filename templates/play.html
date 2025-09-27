@@ -3,7 +3,7 @@
   {% if require_login %}
     <p>You must sign in to play. Use the "Sign in with Google" button in the top-right.</p>
   {% else %}
-    <p><strong>ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
+    
     {% if not puzzle %}
       {% set has_active = active_sessions and active_sessions|length > 0 %}
       <form method="get" action="/play" id="play-start-form">
@@ -67,7 +67,13 @@
     {% endif %}
 
     {% if requested and puzzle %}
+      {% if session_id %}
+      <div style="margin-bottom:8px;">
+        <button id="give-up-btn" class="btn btn-danger">Give Up</button>
+      </div>
+      {% endif %}
       <div id="interactive-play" style="margin-top:0;"></div>
+      <p style="margin-top:8px;"><strong>ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
       {% if host_id is defined and puzzle.players > 1 %}
         <div class="muted" style="margin-top:4px;">
           Host: {{ host_id }}{% if is_host %} (you){% endif %}
@@ -114,13 +120,10 @@
         {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}" />{% endif %}
         <input type="hidden" name="seconds" value="" />
         <input type="hidden" name="solved" value="0" />
-        <button type="submit" class="btn btn-primary">Submit</button>
+        
       </form>
 
       {% if session_id %}
-      <div style="margin-top:8px;">
-        <button id="give-up-btn" class="btn btn-danger">Give Up</button>
-      </div>
       <!-- Turn limit reached modal -->
       <div id="limit-modal" class="modal-overlay" style="display:none; z-index: 9999;">
         <div class="modal">
