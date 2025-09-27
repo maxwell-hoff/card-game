@@ -72,7 +72,6 @@
     {% elif not puzzle %}
       <p>No puzzles found. Generate them first.</p>
     {% else %}
-      <p><a href="/quick">← Back</a></p>
       <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
       <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
       <div class="grid" id="static-grid" style="display:none;">
