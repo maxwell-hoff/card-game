@@ -202,6 +202,43 @@
       const lobbyStatus = document.getElementById('lobby-status');
       let isReady = false;
       let pollTimer = null;
+      // Block auto-redirect briefly on back/forward navigations
+      let redirectBlockUntilTs = 0;
+      try {
+        const navEntries = (performance && performance.getEntriesByType) ? performance.getEntriesByType('navigation') : null;
+        const navType = navEntries && navEntries[0] ? navEntries[0].type : (performance && performance.navigation && performance.navigation.type === 2 ? 'back_forward' : '');
+        const stored = parseInt((localStorage.getItem('lobbyRedirectBlockUntil') || '0'), 10) || 0;
+        redirectBlockUntilTs = Math.max(stored, Number(window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ || 0) || 0);
+        const isBackForward = navType === 'back_forward';
+        if (isBackForward) {
+          redirectBlockUntilTs = Date.now() + 12000; // 12s grace
+          window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ = redirectBlockUntilTs;
+          localStorage.setItem('lobbyRedirectBlockUntil', String(redirectBlockUntilTs));
+          // Add noredirect=1 to URL to ensure no auto-redirect while user navigates back
+          try {
+            const url = new URL(location.href);
+            url.searchParams.set('noredirect', '1');
+            history.replaceState(history.state, '', url.toString());
+          } catch(_) {}
+        }
+        window.addEventListener('pageshow', (e) => {
+          if (e && e.persisted) {
+            const ts = Date.now() + 12000;
+            redirectBlockUntilTs = ts;
+            window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ = ts;
+            try { localStorage.setItem('lobbyRedirectBlockUntil', String(ts)); } catch(_) {}
+            try {
+              const url = new URL(location.href);
+              url.searchParams.set('noredirect', '1');
+              history.replaceState(history.state, '', url.toString());
+            } catch(_) {}
+          }
+        });
+      } catch (_) {}
+
+      function hasNoRedirectParam() {
+        try { return new URLSearchParams(location.search).get('noredirect') === '1'; } catch(_) { return false; }
+      }
 
       function renderReadyPills(party) {
         const pills = document.querySelectorAll('.ready-pill');
@@ -311,8 +348,19 @@
           const currentSessionInput = document.querySelector('input[name="session_id"]');
           const currentSessionId = currentSessionInput ? Number(currentSessionInput.value) : null;
           if (j.active_session_id && (!currentSessionId || Number(j.active_session_id) !== currentSessionId)) {
-            location.href = '/quick?session_id=' + String(j.active_session_id);
-            return;
+            const blockUntil = Math.max(
+              Number(window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ || 0),
+              parseInt((localStorage.getItem('lobbyRedirectBlockUntil') || '0'), 10) || 0
+            );
+            const skipByParam = hasNoRedirectParam();
+            if (!skipByParam && Date.now() >= blockUntil) {
+              try { localStorage.removeItem('lobbyRedirectBlockUntil'); } catch(_) {}
+              location.href = '/quick?session_id=' + String(j.active_session_id);
+              return;
+            } else if (lobbyStatus) {
+              const href = '/quick?session_id=' + String(j.active_session_id);
+              lobbyStatus.innerHTML = 'Session ready. <a href="' + href + '">Resume</a> (auto-redirect paused)';
+            }
           }
         } catch (_) {}
         finally {
