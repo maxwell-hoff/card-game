@@ -3,6 +3,91 @@
   <h1 style="margin-top:0;">Cascade</h1>
   <p style="max-width:760px;">Cascade is a cooperative strategy card puzzle designed to be played <strong>in person</strong> with a small group. Think of it as a modern successor to classic gathering games like Bridge: you get the social connection and table talk, plus the modern perks of computers: automatic progress tracking, unlimited challenge progression, and millions of auto-balanced puzzles.</p>
 
+  <div class="card" style="margin:14px 0;">
+    <h2 style="margin-top:4px;">Setup</h2>
+    <div class="howto-grid" style="margin-bottom:8px;">
+      <div class="howto-step card">
+        <h3 style="margin-top:0;">Play in person or online</h3>
+        <p class="muted" style="margin-top:4px;">Gather at a table <em>or</em> invite friends online. Everyone sees the same puzzle.</p>
+        <ul>
+          <li>Sign in. Share Player IDs to invite.</li>
+          <li>Choose players (1–5). More players = more rows.</li>
+          <li>Lay out physical cards as instructed by the board.</li>
+        </ul>
+      </div>
+      <div class="howto-step card">
+        <h3 style="margin-top:0;">Rows per player</h3>
+        <p class="muted" style="margin-top:4px;">Each player controls a unique row. You can only perform actions on your assigned row.</p>
+        <ul>
+          <li>1 player → 1 player row + 1 opponent row</li>
+          <li>2 players → 2 player rows + 1 opponent row</li>
+          <li>Up to 5 total rows including opponent row</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2 style="margin-top:4px;">How to play (30s)</h2>
+    <div class="howto-grid">
+      <div class="howto-step card">
+        <h3 style="margin-top:0;">Move a row</h3>
+        <p class="muted" style="margin-top:4px;">Shift your row one step <strong>left</strong> or <strong>right</strong>. Reserves wrap cards around.</p>
+        <div class="howto-demo">
+          <div class="demo-board anim-row-both">
+            <div class="reserve reserve-left"></div>
+            <div class="grid-5x4">
+              <div class="r r0"><div></div><div></div><div></div><div></div><div></div></div>
+              <div class="r r1 player"><div></div><div class="accent"></div><div></div><div></div><div></div></div>
+              <div class="r r2 player"><div></div><div></div><div></div><div class="accent"></div><div></div></div>
+              <div class="r r3 opp"><div></div><div></div><div></div><div></div><div></div></div>
+            </div>
+            <div class="reserve reserve-right"></div>
+          </div>
+        </div>
+      </div>
+      <div class="howto-step card">
+        <h3 style="margin-top:0;">Move a column</h3>
+        <p class="muted" style="margin-top:4px;">Shift a column one step <strong>up</strong> or <strong>down</strong>. Column reserves wrap cards around.</p>
+        <div class="howto-demo">
+          <div class="demo-board anim-col-both">
+            <div class="col-reserve top"></div>
+            <div class="grid-5x4 col-demo">
+              <div class="r r0"><div></div><div class="accent"></div><div></div><div></div><div></div></div>
+              <div class="r r1 player"><div></div><div></div><div></div><div></div><div></div></div>
+              <div class="r r2 player"><div></div><div></div><div></div><div></div><div></div></div>
+              <div class="r r3 opp"><div></div><div></div><div></div><div></div><div></div></div>
+            </div>
+            <div class="col-reserve bottom"></div>
+          </div>
+        </div>
+      </div>
+      <div class="howto-step card">
+        <h3 style="margin-top:0;">Swap two cards</h3>
+        <p class="muted" style="margin-top:4px;">Swap positions of two cards in a row.</p>
+        <div class="howto-demo anim-swap">
+          <div class="swap-stage">
+            <div class="swap-token a"></div>
+            <div class="swap-token b"></div>
+          </div>
+        </div>
+      </div>
+      <div class="howto-step card">
+        <h3 style="margin-top:0;">Goal</h3>
+        <p class="muted" style="margin-top:4px;">Win by matching the <strong>target layout</strong> within the allowed turns.</p>
+        <ul>
+          <li>All cards match their target positions</li>
+          <li>Completed within the turn limit</li>
+        </ul>
+        <div class="howto-demo goal">
+          <div class="goal-stage">
+            <div class="goal-row"><div></div><div class="accent"></div><div></div><div></div><div></div></div>
+            <div class="demo-arrow">→</div>
+            <div class="goal-row success"><div></div><div></div><div></div><div class="accent"></div><div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <h2>Why play</h2>
   <ul>
     <li><strong>Bring people together</strong>: a simple shared board that sparks collaboration and strategy discussions.</li>

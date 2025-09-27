@@ -18,7 +18,7 @@
         <a href="/leaderboard">Leaderboard</a>
         {% endif %}
         <span style="margin-left:auto; display:flex; align-items:center;">
-          <span id="user-display" class="muted" style="margin-right:8px;">{% if session_user %}Signed in as {{ session_user.display_name }}{% if session_user.user_code %} (Player ID: {{ session_user.user_code }}){% endif %}{% else %}Not signed in{% endif %}</span>
+          <span id="user-display" class="muted" style="margin-right:8px;">{% if session_user %} {{ session_user.display_name }}{% if session_user.user_code %} (ID: {{ session_user.user_code }}){% endif %}{% else %}Not signed in{% endif %}</span>
           {% if not session_user %}
           <button id="google-login-btn" class="btn btn-primary">Sign in with Google</button>
           {% else %}
