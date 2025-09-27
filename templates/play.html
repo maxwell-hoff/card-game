@@ -3,7 +3,7 @@
   {% if require_login %}
     <p>You must sign in to play. Use the "Sign in with Google" button in the top-right.</p>
   {% else %}
-    <p><strong>Your ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
+    
     {% if not puzzle %}
       {% set has_active = active_sessions and active_sessions|length > 0 %}
       <form method="get" action="/play" id="play-start-form">
@@ -67,14 +67,19 @@
     {% endif %}
 
     {% if requested and puzzle %}
-      <p><a href="/play">← Back</a></p>
-      {% if host_id is defined %}
+      {% if session_id %}
+      <div style="margin-bottom:8px;">
+        <button id="give-up-btn" class="btn btn-danger">Give Up</button>
+      </div>
+      {% endif %}
+      <div id="interactive-play" style="margin-top:0;"></div>
+      <p style="margin-top:8px;"><strong>ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
+      {% if host_id is defined and puzzle.players > 1 %}
         <div class="muted" style="margin-top:4px;">
           Host: {{ host_id }}{% if is_host %} (you){% endif %}
         </div>
       {% endif %}
       <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
-      <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
       <div class="grid" id="static-grid" style="display:none;">
         {% set rows = layout.rows %}
         {% set row_res = layout.row_reserves %}
@@ -108,22 +113,17 @@
         {% endfor %}
       </div>
 
-      <div id="interactive-play" style="margin-top:8px;"></div>
+      
 
       <form method="post" action="/report" style="margin-top:8px;" id="report-form">
         <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
         {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}" />{% endif %}
         <input type="hidden" name="seconds" value="" />
-        <label>
-          <input type="checkbox" name="solved" value="1" /> Solved
-        </label>
-        <button type="submit" class="btn btn-primary">Submit</button>
+        <input type="hidden" name="solved" value="0" />
+        
       </form>
 
       {% if session_id %}
-      <div style="margin-top:8px;">
-        <button id="give-up-btn" class="btn btn-danger">Give Up</button>
-      </div>
       <!-- Turn limit reached modal -->
       <div id="limit-modal" class="modal-overlay" style="display:none; z-index: 9999;">
         <div class="modal">
@@ -250,7 +250,7 @@
         moveSpan.textContent = `Moves: ${history.length}${Number.isFinite(expectedTurns) ? ' / ' + expectedTurns : ''}`;
         const done = eq(current, solved);
         statusSpan.textContent = done ? 'Solved!' : '';
-        try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.checked = done; } catch(_) {}
+        try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.value = done ? '1' : '0'; } catch(_) {}
 
         // Determine eligible row for this turn
         const numPlayers = Math.max(0, current.rows.length - 1);

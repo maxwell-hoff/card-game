@@ -5,7 +5,7 @@
   {% if require_login %}
     <p>You must sign in to play. Use the "Sign in with Google" button in the top-right.</p>
   {% else %}
-    <p><strong>Your ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
+    <p><strong>ELO:</strong> {% if elo is not none %}{{ '%.0f'|format(elo) }}{% else %}-{% endif %}</p>
     {% if not puzzle %}
       {% set has_active = active_sessions and active_sessions|length > 0 %}
       <form method="get" action="/play">
@@ -67,9 +67,8 @@
     {% endif %}
 
     {% if requested and puzzle %}
-      <p><a href="/play">← Back</a></p>
+      <div id="interactive-play" style="margin-top:0;"></div>
       <p><strong>Puzzle ID:</strong> {{ puzzle.id }} | <strong>Players:</strong> {{ puzzle.players }} | <strong>Level:</strong> {{ puzzle.level }}</p>
-      <p><strong>Turns to solve in:</strong> {{ expected_turns }}{% if solve_pct is not none %} | <strong>Solve%:</strong> {{ '%.1f'|format(solve_pct) }}%{% endif %}</p>
       <div class="grid" id="static-grid" style="display:none;">
         {% set rows = layout.rows %}
         {% set row_res = layout.row_reserves %}
@@ -103,15 +102,13 @@
         {% endfor %}
       </div>
 
-      <div id="interactive-play" style="margin-top:8px;"></div>
+      
 
       <form method="post" action="/report" style="margin-top:8px;" id="report-form">
         <input type="hidden" name="puzzle_id" value="{{ puzzle.id }}" />
         {% if session_id %}<input type="hidden" name="session_id" value="{{ session_id }}" />{% endif %}
         <input type="hidden" name="seconds" value="" />
-        <label>
-          <input type="checkbox" name="solved" value="1" /> Solved
-        </label>
+        <input type="hidden" name="solved" value="0" />
         <button type="submit">Submit</button>
       </form>
 
@@ -201,7 +198,7 @@
         moveSpan.textContent = `Moves: ${history.length}${Number.isFinite(expectedTurns) ? ' / ' + expectedTurns : ''}`;
         const done = eq(current, solved);
         statusSpan.textContent = done ? 'Solved!' : '';
-        try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.checked = done; } catch(_) {}
+        try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.value = done ? '1' : '0'; } catch(_) {}
 
         // Determine eligible row for this turn
         const numPlayers = Math.max(0, current.rows.length - 1);
@@ -306,6 +303,43 @@
       const lobbyStatus = document.getElementById('lobby-status');
       let isReady = false;
       let pollTimer = null;
+      // Block auto-redirect briefly on back/forward navigations
+      let redirectBlockUntilTs = 0;
+      try {
+        const navEntries = (performance && performance.getEntriesByType) ? performance.getEntriesByType('navigation') : null;
+        const navType = navEntries && navEntries[0] ? navEntries[0].type : (performance && performance.navigation && performance.navigation.type === 2 ? 'back_forward' : '');
+        const stored = parseInt((localStorage.getItem('lobbyRedirectBlockUntil') || '0'), 10) || 0;
+        redirectBlockUntilTs = Math.max(stored, Number(window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ || 0) || 0);
+        const isBackForward = navType === 'back_forward';
+        if (isBackForward) {
+          redirectBlockUntilTs = Date.now() + 12000; // 12s grace
+          window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ = redirectBlockUntilTs;
+          localStorage.setItem('lobbyRedirectBlockUntil', String(redirectBlockUntilTs));
+          // Add noredirect=1 to URL to ensure no auto-redirect while user navigates back
+          try {
+            const url = new URL(location.href);
+            url.searchParams.set('noredirect', '1');
+            history.replaceState(history.state, '', url.toString());
+          } catch(_) {}
+        }
+        window.addEventListener('pageshow', (e) => {
+          if (e && e.persisted) {
+            const ts = Date.now() + 12000;
+            redirectBlockUntilTs = ts;
+            window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ = ts;
+            try { localStorage.setItem('lobbyRedirectBlockUntil', String(ts)); } catch(_) {}
+            try {
+              const url = new URL(location.href);
+              url.searchParams.set('noredirect', '1');
+              history.replaceState(history.state, '', url.toString());
+            } catch(_) {}
+          }
+        });
+      } catch (_) {}
+
+      function hasNoRedirectParam() {
+        try { return new URLSearchParams(location.search).get('noredirect') === '1'; } catch(_) { return false; }
+      }
 
       function renderReadyPills(party) {
         const pills = document.querySelectorAll('.ready-pill');
@@ -412,8 +446,19 @@
           const currentSessionInput = document.querySelector('input[name="session_id"]');
           const currentSessionId = currentSessionInput ? Number(currentSessionInput.value) : null;
           if (j.active_session_id && (!currentSessionId || Number(j.active_session_id) !== currentSessionId)) {
-            location.href = '/play?session_id=' + String(j.active_session_id);
-            return;
+            const blockUntil = Math.max(
+              Number(window.__LOBBY_REDIRECT_BLOCKED_UNTIL__ || 0),
+              parseInt((localStorage.getItem('lobbyRedirectBlockUntil') || '0'), 10) || 0
+            );
+            const skipByParam = hasNoRedirectParam();
+            if (!skipByParam && Date.now() >= blockUntil) {
+              try { localStorage.removeItem('lobbyRedirectBlockUntil'); } catch(_) {}
+              location.href = '/play?session_id=' + String(j.active_session_id);
+              return;
+            } else if (lobbyStatus) {
+              const href = '/play?session_id=' + String(j.active_session_id);
+              lobbyStatus.innerHTML = 'Session ready. <a href="' + href + '">Resume</a> (auto-redirect paused)';
+            }
           }
         } catch (_) {}
         finally {
@@ -617,7 +662,7 @@
             const txt = el.textContent || '';
             const m = txt.match(/Moves:\s*(\d+)/i);
             const moves = m ? parseInt(m[1], 10) : 0;
-            const isSolved = !!(form.querySelector('input[name="solved"]')?.checked);
+            const isSolved = (form.querySelector('input[name="solved"]')?.value === '1');
             if (!isSolved && isHost && moves >= expectedTurns) {
               const modal = document.getElementById('giveup-choice-modal');
               if (modal) modal.style.display = 'block';
