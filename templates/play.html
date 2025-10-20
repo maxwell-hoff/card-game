@@ -223,10 +223,50 @@
         return true;
       }
 
+      // Compute each win condition individually for UI checklist
+      function computeWinConditions(L){
+        const res = {
+          sameSuitRow: { ok: false, rowIndex: null },
+          monoColumn: { ok: false, colIndex: null, direction: null },
+          oppLowest: { ok: false }
+        };
+        if (!L || !L.rows) return res;
+        const numRows = L.rows.length; const numCols = 5;
+        // Same-suit row
+        for (let r=0; r<numRows; r++){
+          const suits = L.rows[r].map(code => String(code).slice(-1));
+          if (suits.length === numCols && new Set(suits).size === 1){ res.sameSuitRow.ok = true; res.sameSuitRow.rowIndex = r; break; }
+        }
+        // Monotonic column
+        const rankOf = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
+        for (let c=0; c<numCols; c++){
+          const ranks = Array.from({length:numRows}, (_,r)=>rankOf(L.rows[r][c]));
+          const asc = ranks.every((v,i,arr)=> i===0 || arr[i-1] < v);
+          const desc = ranks.every((v,i,arr)=> i===0 || arr[i-1] > v);
+          if (asc || desc){ res.monoColumn.ok = true; res.monoColumn.colIndex = c; res.monoColumn.direction = asc ? 'asc' : 'desc'; break; }
+        }
+        // Opponent highest lower than all others
+        const oppIdx = Number(L.opponent_row_index||0);
+        if (Number.isInteger(oppIdx) && oppIdx >= 0 && oppIdx < numRows){
+          const oppHigh = Math.max(...L.rows[oppIdx].map(rankOf));
+          let allHigher = true;
+          for (let r=0; r<numRows && allHigher; r++){
+            if (r===oppIdx) continue;
+            for (let c=0; c<numCols; c++){
+              if (!(oppHigh < rankOf(L.rows[r][c]))){ allHigher = false; break; }
+            }
+          }
+          res.oppLowest.ok = allHigher;
+        }
+        return res;
+      }
+
       let current = cloneLayout(start);
       const history = [];
       const opp = current.opponent_row_index;
       const expectedTurns = Number(JSON.parse('{{ expected_turns | default(0) | tojson | safe }}'));
+      // Track prior solved state to only auto-submit on transition to solved
+      let prevDone = (function(){ try { return eq(current, solved) || isSolvedByCriteria(current); } catch(_) { return false; } })();
 
       function push(type, params){ history.push({type, params}); }
       function reset(){ /* disabled */ }
@@ -243,14 +283,38 @@
       header.appendChild(moveSpan); header.appendChild(statusSpan);
       container.appendChild(header);
 
+      // Win conditions checklist UI
+      const winWrap = document.createElement('div');
+      winWrap.style.margin = '6px 0 10px 0';
+      const winTitle = document.createElement('div');
+      winTitle.innerHTML = '<strong>Win conditions</strong>';
+      const winList = document.createElement('ul');
+      winList.id = 'win-conditions';
+      winList.style.margin = '6px 0 0 0';
+      winList.style.paddingLeft = '18px';
+      winWrap.appendChild(winTitle);
+      winWrap.appendChild(winList);
+      container.appendChild(winWrap);
+
       const grid=document.createElement('div'); grid.className='grid'; container.appendChild(grid);
       let selected=null;
 
       function render(){
         moveSpan.textContent = `Moves: ${history.length}${Number.isFinite(expectedTurns) ? ' / ' + expectedTurns : ''}`;
-        const done = eq(current, solved);
+        const doneExact = eq(current, solved);
+        const doneByCriteria = isSolvedByCriteria(current);
+        const done = doneExact || doneByCriteria;
         statusSpan.textContent = done ? 'Solved!' : '';
         try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.value = done ? '1' : '0'; } catch(_) {}
+
+        // Update win conditions checklist from current layout
+        const cond = computeWinConditions(current);
+        const li = (label, ok) => `<li>${ok ? '✅' : '⬜'} ${label}</li>`;
+        winList.innerHTML = [
+          li('One row is all the same suit', cond.sameSuitRow.ok),
+          li('One column strictly ascending or descending by rank', cond.monoColumn.ok),
+          li("Opponent row's highest is lower than all other cards", cond.oppLowest.ok)
+        ].join('');
 
         // Determine eligible row for this turn
         const numPlayers = Math.max(0, current.rows.length - 1);
@@ -369,10 +433,12 @@
           grid.appendChild(row);
         }
 
-        // Auto-complete logic
-        if (done) {
+        // Auto-complete logic: only host may submit, and only after at least one move
+        const transitionedToDone = (!prevDone && done);
+        if (transitionedToDone && isHost && history.length > 0) {
           try { form.submit(); return; } catch(_) {}
         }
+        prevDone = done;
         if (!done && Number.isFinite(expectedTurns) && expectedTurns > 0 && history.length >= expectedTurns) {
           const limitModal = document.getElementById('limit-modal');
           if (limitModal && isHost) {
