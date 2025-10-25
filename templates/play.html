@@ -202,7 +202,20 @@
           if (suits.length === numCols && new Set(suits).size === 1) return true;
         }
         // 2) Any column strictly ascending or strictly descending by rank
-        const rankOf1 = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
+        const rankOf1 = (code) => {
+          const s = String(code || '');
+          const body = s.slice(0, -1).toUpperCase();
+          if (!body) return -999;
+          if (/^\d+$/.test(body)) return parseInt(body, 10);
+          switch (body) {
+            case 'A': return 14;
+            case 'K': return 13;
+            case 'Q': return 12;
+            case 'J': return 11;
+            case 'T': return 10;
+            default: return -999;
+          }
+        };
         for (let c=0; c<numCols; c++){
           const ranks = Array.from({length:numRows}, (_,r)=>rankOf1(L.rows[r][c]));
           const asc = ranks.every((v,i,arr)=> i===0 || arr[i-1] < v);
@@ -211,7 +224,7 @@
         }
         // 3) Opponent highest lower than ALL CARDS in all other rows
         const opp = Number(L.opponent_row_index||0);
-        const rankOf2 = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
+        const rankOf2 = rankOf1;
         const oppHigh = Math.max(...L.rows[opp].map(rankOf2));
         for (let r=0; r<numRows; r++){
           if (r===opp) continue;
@@ -223,10 +236,52 @@
         return true;
       }
 
+      // Compute each win condition individually for UI checklist
+      function computeWinConditions(L){
+        const res = {
+          sameSuitRow: { ok: false, rowIndex: null },
+          monoColumn: { ok: false, colIndex: null, direction: null },
+          oppLowest: { ok: false }
+        };
+        if (!L || !L.rows) return res;
+        const numRows = L.rows.length; const numCols = 5;
+        // Same-suit row
+        for (let r=0; r<numRows; r++){
+          const suits = L.rows[r].map(code => String(code).slice(-1));
+          if (suits.length === numCols && new Set(suits).size === 1){ res.sameSuitRow.ok = true; res.sameSuitRow.rowIndex = r; break; }
+        }
+        // Monotonic column
+        const rankOf = (code) => { const s=String(code); const rk=parseInt(s.slice(0, -1), 10); return isFinite(rk) ? rk : -999; };
+        for (let c=0; c<numCols; c++){
+          const ranks = Array.from({length:numRows}, (_,r)=>rankOf(L.rows[r][c]));
+          const asc = ranks.every((v,i,arr)=> i===0 || arr[i-1] < v);
+          const desc = ranks.every((v,i,arr)=> i===0 || arr[i-1] > v);
+          if (asc || desc){ res.monoColumn.ok = true; res.monoColumn.colIndex = c; res.monoColumn.direction = asc ? 'asc' : 'desc'; break; }
+        }
+        // Opponent highest lower than all others
+        const oppIdx = Number(L.opponent_row_index||0);
+        if (Number.isInteger(oppIdx) && oppIdx >= 0 && oppIdx < numRows){
+          const oppHigh = Math.max(...L.rows[oppIdx].map(rankOf));
+          let allHigher = true;
+          for (let r=0; r<numRows && allHigher; r++){
+            if (r===oppIdx) continue;
+            for (let c=0; c<numCols; c++){
+              if (!(oppHigh < rankOf(L.rows[r][c]))){ allHigher = false; break; }
+            }
+          }
+          res.oppLowest.ok = allHigher;
+        }
+        return res;
+      }
+
       let current = cloneLayout(start);
       const history = [];
       const opp = current.opponent_row_index;
       const expectedTurns = Number(JSON.parse('{{ expected_turns | default(0) | tojson | safe }}'));
+      // Track prior solved state to only auto-submit on transition to solved
+      let prevDone = (function(){ try { return eq(current, solved) || isSolvedByCriteria(current); } catch(_) { return false; } })();
+      let locked = false; // lock interactions when move limit reached
+      let prevLimit = false;
 
       function push(type, params){ history.push({type, params}); }
       function reset(){ /* disabled */ }
@@ -243,14 +298,39 @@
       header.appendChild(moveSpan); header.appendChild(statusSpan);
       container.appendChild(header);
 
+      // Win conditions checklist UI
+      const winWrap = document.createElement('div');
+      winWrap.style.margin = '6px 0 10px 0';
+      const winTitle = document.createElement('div');
+      winTitle.innerHTML = '<strong>Win conditions</strong>';
+      const winList = document.createElement('ul');
+      winList.id = 'win-conditions';
+      winList.style.margin = '6px 0 0 0';
+      winList.style.paddingLeft = '18px';
+      winWrap.appendChild(winTitle);
+      winWrap.appendChild(winList);
+      container.appendChild(winWrap);
+
       const grid=document.createElement('div'); grid.className='grid'; container.appendChild(grid);
       let selected=null;
 
       function render(){
         moveSpan.textContent = `Moves: ${history.length}${Number.isFinite(expectedTurns) ? ' / ' + expectedTurns : ''}`;
-        const done = eq(current, solved);
-        statusSpan.textContent = done ? 'Solved!' : '';
+        const doneExact = eq(current, solved);
+        const doneByCriteria = isSolvedByCriteria(current);
+        const done = doneExact || doneByCriteria;
+        // Only show "Solved!" after at least one move to avoid initial solved flash
+        statusSpan.textContent = (done && history.length > 0) ? 'Solved!' : '';
         try { const cb=form.querySelector('input[name="solved"]'); if (cb) cb.value = done ? '1' : '0'; } catch(_) {}
+
+        // Update win conditions checklist from current layout
+        const cond = computeWinConditions(current);
+        const li = (label, ok) => `<li>${ok ? '✅' : '⬜'} ${label}</li>`;
+        winList.innerHTML = [
+          li('One row is all the same suit', cond.sameSuitRow.ok),
+          li('One column strictly ascending or descending by rank', cond.monoColumn.ok),
+          li("Opponent row's highest is lower than all other cards", cond.oppLowest.ok)
+        ].join('');
 
         // Determine eligible row for this turn
         const numPlayers = Math.max(0, current.rows.length - 1);
@@ -260,6 +340,8 @@
         const HOST_ID = Number(JSON.parse('{{ host_id | default(None) | tojson | safe }}'));
         const MY_ID = Number(window.__SESSION_USER_ID__ || 0);
         const isHost = (HOST_ID && MY_ID && Number(HOST_ID) === Number(MY_ID));
+        const limitReached = (!done && Number.isFinite(expectedTurns) && expectedTurns > 0 && history.length >= expectedTurns);
+        locked = !!limitReached;
 
         grid.innerHTML='';
         // Column up controls ABOVE reserves
@@ -273,8 +355,8 @@
           for(let c=0;c<5;c++){
             const btn=document.createElement('button'); btn.textContent='↑'; btn.style.width='100%'; btn.style.height='100%';
             const wrap=document.createElement('div'); wrap.className='cell'; wrap.appendChild(btn);
-            btn.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('col_up',{col_index:c}); colUp(c); render(); });
-            if (!isHost) { btn.disabled = true; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
+            btn.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost || locked) return; push('col_up',{col_index:c}); colUp(c); render(); });
+            if (!isHost || locked) { btn.disabled = true; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
             row.appendChild(wrap);
           }
           // Right control spacer
@@ -316,7 +398,7 @@
           // Left control at far left of row
           const leftWrap=document.createElement('div'); leftWrap.className='cell'; leftWrap.style.padding='0 4px';
           const btnLeft=document.createElement('button'); btnLeft.textContent='←'; btnLeft.style.width='100%'; btnLeft.style.height='100%';
-          btnLeft.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('row_left', { row_index:r }); rowLeft(r); render(); });
+          btnLeft.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost || locked) return; push('row_left', { row_index:r }); rowLeft(r); render(); });
           leftWrap.appendChild(btnLeft); row.appendChild(leftWrap);
 
           // Row reserves
@@ -326,11 +408,11 @@
           // Main cells
           for (let c=0; c<5; c++) {
             const cell=document.createElement('div'); cell.className='cell' + (r===opp ? ' opponent' : ''); cell.textContent=String(current.rows[r][c]||'');
-            if (r !== opp && (eligibleRow === null || r === eligibleRow)) {
+            if (!locked && r !== opp && (eligibleRow === null || r === eligibleRow)) {
               cell.style.cursor='pointer';
               cell.addEventListener('click', (e)=>{
                 e.preventDefault();
-                if (!isHost) return;
+                if (!isHost || locked) return;
                 if (!selected) { selected = { r, c }; cell.style.outline='2px solid #06c'; return; }
                 const sr=selected.r, sc=selected.c; const prev=grid.querySelector('[data-sel=\"1\"]'); if (prev) { prev.removeAttribute('data-sel'); prev.style.outline=''; }
                 selected = null;
@@ -344,9 +426,9 @@
           // Right control on far right
           const rightWrap=document.createElement('div'); rightWrap.className='cell'; rightWrap.style.padding='0 4px';
           const btnRight=document.createElement('button'); btnRight.textContent='→'; btnRight.style.width='100%'; btnRight.style.height='100%';
-          btnRight.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('row_right', { row_index:r }); rowRight(r); render(); });
+          btnRight.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost || locked) return; push('row_right', { row_index:r }); rowRight(r); render(); });
           rightWrap.appendChild(btnRight); row.appendChild(rightWrap);
-          if (!isHost || r===opp || (eligibleRow !== null && r !== eligibleRow)) { btnLeft.disabled=true; btnRight.disabled=true; btnLeft.style.opacity='0.6'; btnRight.style.opacity='0.6'; }
+          if (!isHost || locked || r===opp || (eligibleRow !== null && r !== eligibleRow)) { btnLeft.disabled=true; btnRight.disabled=true; btnLeft.style.opacity='0.6'; btnRight.style.opacity='0.6'; }
 
           grid.appendChild(row);
         }
@@ -360,8 +442,8 @@
           for(let c=0;c<5;c++){
             const btn=document.createElement('button'); btn.textContent='↓'; btn.style.width='100%'; btn.style.height='100%';
             const wrap=document.createElement('div'); wrap.className='cell'; wrap.appendChild(btn);
-            btn.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost) return; push('col_down', { col_index:c }); colDown(c); render(); });
-            if (!isHost) { btn.disabled = true; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
+            btn.addEventListener('click', (e)=>{ e.preventDefault(); if (!isHost || locked) return; push('col_down', { col_index:c }); colDown(c); render(); });
+            if (!isHost || locked) { btn.disabled = true; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
             row.appendChild(wrap);
           }
           // Right control spacer
@@ -369,15 +451,35 @@
           grid.appendChild(row);
         }
 
-        // Auto-complete logic
-        if (done) {
+        // Auto-complete logic: only host may submit, and only after at least one move
+        const transitionedToDone = (!prevDone && done);
+        if (transitionedToDone && isHost && history.length > 0) {
           try { form.submit(); return; } catch(_) {}
         }
-        if (!done && Number.isFinite(expectedTurns) && expectedTurns > 0 && history.length >= expectedTurns) {
+        prevDone = done;
+        const transitionedToLimit = (!prevLimit && limitReached);
+        prevLimit = limitReached;
+        if (limitReached && isHost) {
           const limitModal = document.getElementById('limit-modal');
-          if (limitModal && isHost) {
-            limitModal.style.display = 'block';
-          }
+          if (limitModal) limitModal.style.display = 'block';
+          // Auto-record a loss at turn limit when unsolved
+          try {
+            const sessionIdInput = document.querySelector('input[name="session_id"]');
+            const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
+            if (transitionedToLimit && sessionId) {
+              fetch('/play/give_up', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId }) })
+                .then(r => r.json().catch(() => null))
+                .then(j => {
+                  if (j && j.ok) {
+                    // Optionally show solution steps when available
+                    const solutionModal = document.getElementById('solution-modal');
+                    const stepsEl = document.getElementById('solution-steps');
+                    if (stepsEl) stepsEl.innerHTML = (Array.isArray(j.steps) ? j.steps.map(s => `<div>${String(s)}</div>`).join('') : '<p>No steps.</p>');
+                    if (solutionModal) solutionModal.style.display = 'block';
+                  }
+                }).catch(() => {});
+            }
+          } catch (_) {}
         }
       }
 
