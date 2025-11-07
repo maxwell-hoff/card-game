@@ -47,6 +47,7 @@ from app.db import (
     get_active_quick_sessions_for_user,
     cancel_accepted_invite,
     lobby_clear_all_ready,
+    has_user_solved_puzzle,
 )
  
 def inviter_display_name(conn, inviter_id: int) -> str:
@@ -259,6 +260,7 @@ def create_app(db_path: str) -> Flask:
             count, solved = get_puzzle_stats(conn, sp.id)
             solve_pct = (solved / count * 100.0) if count else None
             players_count_from_session = max(1, min(5, len(member_rows)))
+            puzzle_already_solved = has_user_solved_puzzle(conn, inviter_id, sp.id) if inviter_id else False
             return render_template(
                 "play.html",
                 puzzle=sp,
@@ -274,6 +276,7 @@ def create_app(db_path: str) -> Flask:
                 elo=elo_value,
                 host_id=sess_inviter_id,
                 is_host=bool(inviter_id == sess_inviter_id),
+                puzzle_already_solved=puzzle_already_solved,
             )
 
         # If not requested, show lobby and single resumable session if any
@@ -349,6 +352,7 @@ def create_app(db_path: str) -> Flask:
             member_user_ids=member_ids,
             mode='ranked',
         )
+        puzzle_already_solved = has_user_solved_puzzle(conn, host_id, puzzle.id) if host_id else False
         return render_template(
             "play.html",
             puzzle=puzzle,
@@ -364,6 +368,7 @@ def create_app(db_path: str) -> Flask:
             elo=elo_value,
             host_id=host_id,
             is_host=True,
+            puzzle_already_solved=puzzle_already_solved,
         )
 
     @app.route("/puzzle/<int:puzzle_id>")
@@ -523,6 +528,9 @@ def create_app(db_path: str) -> Flask:
         # Only host can try again (as it creates a new session for the party)
         if int(current.get("id")) != int(inviter_id):
             return jsonify({"ok": False, "error": "only_host_can_try_again"}), 403
+        # Check if puzzle was already solved - prevent replaying solved puzzles
+        if puzzle_id and has_user_solved_puzzle(conn, inviter_id, int(puzzle_id)):
+            return jsonify({"ok": False, "error": "puzzle_already_solved"}), 400
         # Record a loss if still active, then complete the session
         if status == 'active':
             update_session_result(conn, sid, solved=False, seconds=None, user_id=current.get("id"))
