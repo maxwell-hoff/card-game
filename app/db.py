@@ -1058,6 +1058,34 @@ def get_session_members_with_names(
     return [(int(r[0]), str(r[1])) for r in rows]
 
 
+def has_user_solved_puzzle(conn: sqlite3.Connection, user_id: int, puzzle_id: int) -> bool:
+    """Check if a user has solved a specific puzzle (via sessions or legacy results)."""
+    cur = conn.cursor()
+    # Check in sessions where user is inviter or member
+    cur.execute(
+        """
+        SELECT MAX(gr.solved)
+        FROM game_results gr
+        JOIN game_sessions s ON s.id = gr.session_id
+        WHERE s.puzzle_id = ? AND gr.user_id = ?
+        """,
+        (puzzle_id, user_id),
+    )
+    row = cur.fetchone()
+    if row and row[0] and int(row[0]) == 1:
+        return True
+    # Check legacy results without session
+    cur.execute(
+        """
+        SELECT MAX(solved) FROM game_results 
+        WHERE puzzle_id = ? AND user_id = ? AND session_id IS NULL
+        """,
+        (puzzle_id, user_id),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] and int(row[0]) == 1)
+
+
 def get_session_by_id(conn: sqlite3.Connection, session_id: int) -> Optional[Tuple[int, int, int, int, str, Optional[str], str]]:
     """Return (id, puzzle_id, expected_turns, inviter_id, status, completed_at, started_at) or None."""
     cur = conn.cursor()

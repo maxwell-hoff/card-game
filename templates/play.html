@@ -134,7 +134,7 @@
           <p style="margin-top:8px;">You solved the puzzle! What would you like to do next?</p>
           <div style="display:flex; gap:8px; margin-top:8px; flex-wrap: wrap;">
             <button id="success-new-puzzle" class="btn btn-primary">New puzzle</button>
-            <button id="success-try-again" class="btn">Try again</button>
+            <button id="success-try-again" class="btn" style="display:none;">Try again</button>
           </div>
         </div>
       </div>
@@ -496,7 +496,14 @@
         const transitionedToDone = (!prevDone && done);
         if (transitionedToDone && isHost && history.length > 0) {
           const successModal = document.getElementById('success-modal');
-          if (successModal) successModal.style.display = 'block';
+          if (successModal) {
+            successModal.style.display = 'block';
+            // Hide "Try again" button - once solved, puzzle cannot be replayed
+            const tryAgainBtn = document.getElementById('success-try-again');
+            if (tryAgainBtn) {
+              tryAgainBtn.style.display = 'none';
+            }
+          }
           // Don't auto-submit - wait for user to click a button
         }
         prevDone = done;
@@ -523,6 +530,13 @@
         const closeBtn = document.getElementById('success-modal-close');
         const newPuzzleBtn = document.getElementById('success-new-puzzle');
         const tryAgainBtn = document.getElementById('success-try-again');
+        const puzzleAlreadySolved = {{ puzzle_already_solved | default(false) | tojson | safe }};
+        
+        // Hide "Try again" button if puzzle was already solved
+        if (puzzleAlreadySolved && tryAgainBtn) {
+          tryAgainBtn.style.display = 'none';
+        }
+        
         if (closeBtn) closeBtn.addEventListener('click', () => { successModal.style.display = 'none'; });
         if (newPuzzleBtn) newPuzzleBtn.addEventListener('click', async (e) => {
           e.preventDefault();
