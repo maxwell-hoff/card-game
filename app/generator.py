@@ -231,7 +231,7 @@ def apply_action(layout: Layout, action: Action) -> None:
 
 
 def is_layout_success(layout: Layout) -> bool:
-    """Return True if the layout satisfies any win condition:
+    """Return True if the layout satisfies ALL win conditions:
     1) Any row is all the same suit (including opponent row)
     2) Any column is strictly ascending or strictly descending by rank (Ace high)
     3) Highest card in opponent row is lower than all cards in other rows
@@ -240,18 +240,30 @@ def is_layout_success(layout: Layout) -> bool:
         return False
     num_rows = layout.num_rows
     num_cols = layout.num_cols
+    
+    # Check ALL three conditions must be met
     # 1) Row of five same suit
+    condition1 = False
     for r in range(num_rows):
         suits = [Card.from_code(code).suit for code in layout.rows[r]]
         if len(suits) == num_cols and len(set(suits)) == 1:
-            return True
+            condition1 = True
+            break
+    if not condition1:
+        return False
+    
     # 2) Column strictly ascending or descending by rank
+    condition2 = False
     for c in range(num_cols):
         ranks = [Card.from_code(layout.rows[r][c]).rank for r in range(num_rows)]
         asc = all(ranks[i] < ranks[i+1] for i in range(len(ranks)-1))
         desc = all(ranks[i] > ranks[i+1] for i in range(len(ranks)-1))
         if asc or desc:
-            return True
+            condition2 = True
+            break
+    if not condition2:
+        return False
+    
     # 3) Opponent row highest lower than ALL CARDS in all other rows
     opp = layout.opponent_row_index
     opp_high, _ = layout.find_highest_in_row(opp)
