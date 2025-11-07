@@ -497,12 +497,7 @@
         if (transitionedToDone && isHost && history.length > 0) {
           const successModal = document.getElementById('success-modal');
           if (successModal) successModal.style.display = 'block';
-          // Auto-submit after showing modal
-          try { 
-            setTimeout(() => {
-              try { form.submit(); } catch(_) {}
-            }, 100);
-          } catch(_) {}
+          // Don't auto-submit - wait for user to click a button
         }
         prevDone = done;
         const transitionedToLimit = (!prevLimit && limitReached);
@@ -524,6 +519,7 @@
       (function initSuccessModal(){
         const successModal = document.getElementById('success-modal');
         if (!successModal) return;
+        const form = document.getElementById('report-form');
         const closeBtn = document.getElementById('success-modal-close');
         const newPuzzleBtn = document.getElementById('success-new-puzzle');
         const tryAgainBtn = document.getElementById('success-try-again');
@@ -531,6 +527,13 @@
         if (newPuzzleBtn) newPuzzleBtn.addEventListener('click', async (e) => {
           e.preventDefault();
           try {
+            // Submit form to record the win first (via fetch to avoid redirect)
+            if (form) {
+              const formData = new FormData(form);
+              try {
+                await fetch('/report', { method: 'POST', body: formData });
+              } catch(_) {}
+            }
             const sessionIdInput = document.querySelector('input[name="session_id"]');
             const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
             if (!sessionId) return;
@@ -542,6 +545,13 @@
         if (tryAgainBtn) tryAgainBtn.addEventListener('click', async (e) => {
           e.preventDefault();
           try {
+            // Submit form to record the win first (via fetch to avoid redirect)
+            if (form) {
+              const formData = new FormData(form);
+              try {
+                await fetch('/report', { method: 'POST', body: formData });
+              } catch(_) {}
+            }
             const sessionIdInput = document.querySelector('input[name="session_id"]');
             const sessionId = sessionIdInput ? Number(sessionIdInput.value) : null;
             if (!sessionId) return;
